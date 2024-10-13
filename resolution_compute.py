@@ -292,12 +292,15 @@ if __name__ == '__main__':
         input("按任回车退出")
         sys.exit(1)
     else:
+        test_result = True
         for index, resolution in enumerate(resolution_list):
             if resolution["width"] != computed_resolution[index]["width"] or resolution["height"] != \
                     computed_resolution[index]["height"]:
-                print(f"第{index + 1}张图片的分辨率不正确！测试不通过！\n正确分辨率应为：{computed_resolution[index]}\n实际分辨率为：{resolution}")
-                input("按任回车退出")
-                sys.exit(1)
-        print("分辨率一致！测试通过")
+                print(f"第{index + 1}张图片的分辨率不正确！！\t正确分辨率应为：{computed_resolution[index]}\t实际分辨率为：{resolution}")
+                test_result = False
+        if test_result:
+            print("分辨率一致！\033[32m测试通过\033[0m")
+        else:
+            print("\033[31m测试不通过！\033[0m")
         input("按任回车退出")
         sys.exit(0)
