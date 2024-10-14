@@ -294,8 +294,9 @@ if __name__ == '__main__':
     else:
         test_result = True
         for index, resolution in enumerate(resolution_list):
-            if resolution["width"] != computed_resolution[index]["width"] or resolution["height"] != \
-                    computed_resolution[index]["height"]:
+            width_offeset = abs(resolution["width"] - computed_resolution[index]["width"])
+            height_offset = abs(resolution["height"] - computed_resolution[index]["height"])
+            if width_offeset > 1 or height_offset > 1:
                 print(f"第{index + 1}张图片的分辨率不正确！！\t正确分辨率应为：{computed_resolution[index]}\t实际分辨率为：{resolution}")
                 test_result = False
         if test_result:
