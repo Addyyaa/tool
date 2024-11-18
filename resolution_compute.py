@@ -141,7 +141,7 @@ class ResolutionCompute:
             scale_width = int(picture_width * scale)
             scale_height = int(picture_height * scale)
             scaled_resolutions_list.append((scale_width, scale_height))
-
+            # print(f"缩放后的分辨率：{scale_width}x{scale_height}")
         return scaled_resolutions_list  # 返回所有缩放后的分辨率
 
 
