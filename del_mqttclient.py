@@ -1,3 +1,5 @@
+import sys
+
 import requests
 import json
 import time
@@ -57,15 +59,19 @@ def main():
     login()
 
     # 获取客户端列表
-    client_list = get_clients()
+    while True:
+        client_list = get_clients()
+        if not client_list:
+            print("没有客户端")
+            sys.exit(1)
 
-    # 使用多线程删除客户端
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(del_client, client_id) for client_id in client_list]
+        # 使用多线程删除客户端
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(del_client, client_id) for client_id in client_list]
 
-        # 可选：等待所有任务完成
-        for future in as_completed(futures):
-            pass
+            # 可选：等待所有任务完成
+            for future in as_completed(futures):
+                pass
 
 
 if __name__ == "__main__":
