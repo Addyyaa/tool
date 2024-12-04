@@ -24,8 +24,14 @@ def login(account="admin", password="1662810347189AHIO"):
         "password": password,
         "username": account
     }
-    result = requests.post(url, json=body)
-    token = result.json()['token']
+    while True:
+        try:
+            result = requests.post(url, json=body)
+            token = result.json()['token']
+            break
+        except Exception as e:
+            print("发生错误：", e)
+
     global headers
     headers["Authorization"] = "Bearer " + token
     return token
@@ -35,7 +41,12 @@ def get_clients():
     clients_list = []
     url = "http://139.224.192.36:18083/api/v5/clients?limit=1000&page=1"
     result = requests.get(url, headers=headers)
-    clients = result.json()["data"]
+    while True:
+        try:
+            clients = result.json()["data"]
+            break
+        except Exception as e:
+            print("获取客户端发生错误：", e)
     for i in clients:
         if "conn_" in i["clientid"]:
             clients_list.append(i["clientid"])
