@@ -13,8 +13,8 @@ BROKER = "139.224.192.36"  # MQTT Broker 地址
 PORT = 1883  # 默认端口
 USERNAME = "mqtttest"
 PASSWORD = "mqtttest2022"
-NUM_SUBSCRIBERS = 100  # 订阅用户数
-NUM_PUBLISHERS = 100  # 发布用户数
+NUM_SUBSCRIBERS = 1000  # 订阅用户数
+NUM_PUBLISHERS = 1000  # 发布用户数
 SUB_TOPIC = [
     "/screen/magicframe/cloud/setplaymode[-flat]/mf50",
     "/screen/magicframe/cloud/downloadpicture[-flat]/mf50",
@@ -90,7 +90,7 @@ def conn_mqtt(client_id, subscribe=False):
     client.on_disconnect = on_disconnect
     client.on_subscribe = on_subscribe
     for i in SUB_TOPIC:
-        i = client_id + i
+        # i = client_id + i  # 若要获取每一个设备该主题下的消息接收情况则取消该注释
         receive_msg_spend_time[i] = []
 
     try:
@@ -141,7 +141,9 @@ def on_message(client, userdata, msg):
     timestamp = ast.literal_eval(msg.payload.decode('utf-8'))['time']
     end_time = time.time()
     spend_time = round((end_time - timestamp) * 1000, 2)
-    receive_msg_spend_time[msg.topic].append(spend_time)
+    key = msg.topic.replace(client._client_id.decode('utf-8'), '')
+    # key = msg.topic   # 若要获取每一个设备该主题下的消息接收情况则使用该行代码
+    receive_msg_spend_time[key].append(spend_time)
     receive_msg_count.append(1)
     logger.info(f"{client._client_id} 收到消息，耗时：{spend_time} ms：{msg.topic} 内容：{msg.payload.decode('utf-8')}")
 
