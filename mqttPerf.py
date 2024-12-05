@@ -165,7 +165,7 @@ def on_subscribe(client, userdata, mid, reason_code_list, properties):
         logging.info(f"{client._client_id} 订阅成功，reason_code_list：{reason_code_list}, mid：{mid}")
         end_time = time.time()
         token_time = round((end_time - userdata['start_time']) * 1000, 2)
-        if mid > 0 :
+        if mid > 0 and (mid - 1) > len(SUB_TOPIC):
             sub_spend_time[SUB_TOPIC[mid - 1]].append(token_time)
         logger.info(f"{client._client_id} 订阅耗时：{token_time} ms")
 
