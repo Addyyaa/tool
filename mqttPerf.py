@@ -6,15 +6,16 @@ import threading
 import random
 import string
 import logging
-import json
+from colorama import Fore, Style, init
 
 # 设置连接参数
 BROKER = "139.224.192.36"  # MQTT Broker 地址
 PORT = 1883  # 默认端口
 USERNAME = "mqtttest"
 PASSWORD = "mqtttest2022"
-NUM_SUBSCRIBERS = 1000  # 订阅用户数
-NUM_PUBLISHERS = 1000  # 发布用户数
+NUM_SUBSCRIBERS = 500  # 订阅用户数
+NUM_PUBLISHERS = 10  # 发布用户数
+NUM_HEARTBEATS = 500
 SUB_TOPIC = [
     "/screen/magicframe/cloud/setplaymode[-flat]/mf50",
     "/screen/magicframe/cloud/downloadpicture[-flat]/mf50",
@@ -38,6 +39,12 @@ PUB_TOPIC = [
     "/screen/magicframe/cloud/downloadpicture[-flat]/mf50"
 ]
 
+HEARTBEAT = [
+    "mf50/screen/cloud/screengroupstatus[-flat]/"
+]
+
+init(autoreset=True)
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -58,13 +65,15 @@ receive_msg_count = []
 
 
 # 发布消息的功能
-def publish_messages(client, pub_topic, num):
-    pub_topic = f'conn_subscriber_{str(num)}' + pub_topic
+def publish_messages(client, pub_topic, interval=1, diy_msg=False):
     # print(f"{client._client_id} 发布主题：{pub_topic}")
     try:
         while True:
             # 随机生成消息
-            msg = ''.join(random.choices(string.ascii_letters + string.digits, k=100))
+            if diy_msg:
+                msg = diy_msg
+            else:
+                msg = ''.join(random.choices(string.ascii_letters + string.digits, k=100))
             # msg = f"{str(time.time())}\t" + msg
             msg = {
                 "time": time.time(),
@@ -72,8 +81,11 @@ def publish_messages(client, pub_topic, num):
             }
             msg = str(msg)
             client.publish(pub_topic, msg)
-            # logger.info(f"{client._client_id} 发布消息：{msg}, 主题：{pub_topic}")
-            time.sleep(1)  # 每秒发布一次消息
+            if "heart" in msg:
+                logger.info(f"{client._client_id} 发布消息：{Fore.BLUE}{msg}{Style.RESET_ALL}, 主题：{pub_topic}")
+            else:
+                logger.info(f"{client._client_id} 发布消息：{msg}, 主题：{pub_topic}")
+            time.sleep(int(interval))  # 每秒发布一次消息
     except Exception as e:
         logger.error(f"{client._client_id} 发布消息失败: {e}")
 
@@ -148,13 +160,13 @@ def on_message(client, userdata, msg):
     logger.info(f"{client._client_id} 收到消息，耗时：{spend_time} ms：{msg.topic} 内容：{msg.payload.decode('utf-8')}")
 
 
-
 def on_subscribe(client, userdata, mid, reason_code_list, properties):
     if "Granted" in str(reason_code_list[0]):
         logging.info(f"{client._client_id} 订阅成功，reason_code_list：{reason_code_list}, mid：{mid}")
         end_time = time.time()
         token_time = round((end_time - userdata['start_time']) * 1000, 2)
-        sub_spend_time[SUB_TOPIC[mid - 1]].append(token_time)
+        if mid > 0 :
+            sub_spend_time[SUB_TOPIC[mid - 1]].append(token_time)
         logger.info(f"{client._client_id} 订阅耗时：{token_time} ms")
 
 
@@ -177,9 +189,21 @@ def start_mqtt_clients():
     # 启动发布客户端
     for i in range(NUM_PUBLISHERS):
         client_id = f"conn_publisher_{i + 1}"
+        pub_topic = f"conn_subscriber_{i + 1}" + PUB_TOPIC[0]
         client = conn_mqtt(client_id, subscribe=False)
         # 启动发布客户端线程
-        pub_thread = threading.Thread(target=publish_messages, args=(client, PUB_TOPIC[0], i + 1))
+        pub_thread = threading.Thread(target=publish_messages, args=(client, pub_topic, 1))
+        pub_thread.daemon = True  # 设置为守护线程，主程序退出时该线程会自动退出
+        pub_thread.start()
+        publisher_threads.append(pub_thread)
+
+    # # 启动心跳报文发布客户端
+    for i in range(NUM_HEARTBEATS):
+        client_id = f"conn_heartbeat_{i + 1}"
+        pub_topic = PUB_TOPIC[0] + f"conn_heartbeat_{i + 1}"
+        client = conn_mqtt(client_id, subscribe=False)
+        # 启动发布客户端线程
+        pub_thread = threading.Thread(target=publish_messages, args=(client, pub_topic, 30, "心跳包"))
         pub_thread.daemon = True  # 设置为守护线程，主程序退出时该线程会自动退出
         pub_thread.start()
         publisher_threads.append(pub_thread)
