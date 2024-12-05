@@ -13,9 +13,9 @@ BROKER = "139.224.192.36"  # MQTT Broker 地址
 PORT = 1883  # 默认端口
 USERNAME = "mqtttest"
 PASSWORD = "mqtttest2022"
-NUM_SUBSCRIBERS = 500  # 订阅用户数
+NUM_SUBSCRIBERS = 50  # 订阅用户数
 NUM_PUBLISHERS = 10  # 发布用户数
-NUM_HEARTBEATS = 500
+NUM_HEARTBEATS = 50
 SUB_TOPIC = [
     "/screen/magicframe/cloud/setplaymode[-flat]/mf50",
     "/screen/magicframe/cloud/downloadpicture[-flat]/mf50",
@@ -174,6 +174,7 @@ def on_subscribe(client, userdata, mid, reason_code_list, properties):
 def start_mqtt_clients():
     subscriber_threads = []
     publisher_threads = []
+    heartbeat_threads = []
 
     # 启动订阅客户端
     for i in range(NUM_SUBSCRIBERS):
@@ -203,10 +204,10 @@ def start_mqtt_clients():
         pub_topic = PUB_TOPIC[0] + f"conn_heartbeat_{i + 1}"
         client = conn_mqtt(client_id, subscribe=False)
         # 启动发布客户端线程
-        pub_thread = threading.Thread(target=publish_messages, args=(client, pub_topic, 30, "心跳包"))
-        pub_thread.daemon = True  # 设置为守护线程，主程序退出时该线程会自动退出
-        pub_thread.start()
-        publisher_threads.append(pub_thread)
+        heartbeat_thread = threading.Thread(target=publish_messages, args=(client, pub_topic, 30, "心跳包"))
+        heartbeat_thread.daemon = True  # 设置为守护线程，主程序退出时该线程会自动退出
+        heartbeat_thread.start()
+        heartbeat_threads.append(heartbeat_thread)
 
     # 保持主线程活跃
     try:
@@ -229,6 +230,10 @@ def start_mqtt_clients():
             sub_thread.join()
         for pub_thread in publisher_threads:
             pub_thread.join()
+        for heartbeat_thread in heartbeat_threads:
+            heartbeat_thread.join()
+        logger.info("性能测试结束")
+        exit(0)
 
 
 def calculate_squared_diffs(connect_elapsed_time):
@@ -250,19 +255,25 @@ def calculate_squared_diffs(connect_elapsed_time):
 
 
 def calculate_sub_spendtime():
-    for key, value in sub_spend_time.items():
-        sdt_dev, average, fastest, slowest = calculate_squared_diffs(value)
-        sub_spend_time_list.append(
-            f'样本数：{NUM_SUBSCRIBERS}\t{key}：平均耗时：{average} ms，最快耗时：{fastest} ms，最慢耗时：{slowest} '
-            f'ms，耗时标准差'
-            f'：{sdt_dev}')
-    for key, value in receive_msg_spend_time.items():
-        if len(value) > 0:
-            sdt_dev, average, fastest, slowest = calculate_squared_diffs(value)
-            sub_spend_time_list.append(
-                f'消息接收情况：\n样本数：{len(receive_msg_count)}\t{key}：平均耗时：{average} ms，最快耗时：{fastest} ms，最慢耗时：{slowest} '
-                f'ms，耗时标准差'
-                f'：{sdt_dev}')
+    try:
+        for key, value in sub_spend_time.items():
+            print(f"key: {key} value: {value}")
+            if len(value) > 0:
+                sdt_dev, average, fastest, slowest = calculate_squared_diffs(value)
+                sub_spend_time_list.append(
+                    f'样本数：{NUM_SUBSCRIBERS}\t{key}：平均耗时：{average} ms，最快耗时：{fastest} ms，最慢耗时：{slowest} '
+                    f'ms，耗时标准差'
+                    f'：{sdt_dev}')
+        for key, value in receive_msg_spend_time.items():
+            print(f"key2: {key} value2: {value}")
+            if len(value) > 0:
+                sdt_dev, average, fastest, slowest = calculate_squared_diffs(value)
+                sub_spend_time_list.append(
+                    f'消息接收情况：\n样本数：{len(receive_msg_count)}\t{key}：平均耗时：{average} ms，最快耗时：{fastest} ms，最慢耗时：{slowest} '
+                    f'ms，耗时标准差'
+                    f'：{sdt_dev}')
+    except Exception as e:
+        logger.error("发生错误：", e)
 
 
 if __name__ == "__main__":
