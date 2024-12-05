@@ -257,7 +257,6 @@ def calculate_squared_diffs(connect_elapsed_time):
 def calculate_sub_spendtime():
     try:
         for key, value in sub_spend_time.items():
-            print(f"key: {key} value: {value}")
             if len(value) > 0:
                 sdt_dev, average, fastest, slowest = calculate_squared_diffs(value)
                 sub_spend_time_list.append(
@@ -265,7 +264,6 @@ def calculate_sub_spendtime():
                     f'ms，耗时标准差'
                     f'：{sdt_dev}')
         for key, value in receive_msg_spend_time.items():
-            print(f"key2: {key} value2: {value}")
             if len(value) > 0:
                 sdt_dev, average, fastest, slowest = calculate_squared_diffs(value)
                 sub_spend_time_list.append(
