@@ -1,0 +1,21 @@
+# 排除所有的临时文件
+*.log
+*.tmp
+*.swp
+*.bak
+*.out
+
+# 排除特定文件夹
+node_modules/
+__pycache__/
+build/
+dist/
+
+# 排除某些IDE配置
+.vscode/
+.idea/
+.DS_Store
+
+# 如果有文件夹，但你希望保留文件夹结构，可用如下规则：
+logs/
+!logs/.keep
