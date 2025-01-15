@@ -24,17 +24,20 @@ class ToDoApp:
         self.update_styles()
 
         # 设置顶部区域背景色
-        self.title_bar = tk.Frame(self.root, bg="#333" if self.mode == "dark" else "#ddd")
+        self.title_bar = tk.Frame(self.root, bg="pink" if self.mode == "dark" else "#ddd")
         self.title_bar.pack(fill="x")
 
-        self.title_label = tk.Label(self.title_bar, text="待办事项", font=("Arial", 14, "bold"), fg="#fff" if self.mode == "dark" else "#000", bg=self.title_bar.cget("bg"))
+        self.title_label = tk.Label(self.title_bar, text="待办事项", font=("Arial", 14, "bold"), fg="#fff" if self.mode == "dark" else "#ddd", bg=self.title_bar.cget("bg"))
         self.title_label.pack(pady=5)
 
         self.task_frame = tk.Frame(self.root, bg="#1e1e1e")
         self.task_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        self.canvas = tk.Canvas(self.task_frame, bg="#1e1e1e", highlightthickness=0)
+        self.canvas = tk.Canvas(self.task_frame, bg=self.root.cget("bg"), highlightthickness=0)
+
         self.scrollbar = tk.Scrollbar(self.task_frame, orient="vertical", command=self.canvas.yview)
+        self.scrollbar.configure(bg=self.root.cget("bg"))  # 设置背景颜色
+
         self.task_listbox = tk.Frame(self.canvas, bg="#1e1e1e")
 
         self.task_listbox.bind(
@@ -169,21 +172,59 @@ class ToDoApp:
             self.tasks = []
             self.task_status = []
 
+    # 在 toggle_mode 方法中调整任务列表样式
     def toggle_mode(self):
         if self.mode == "dark":
             self.mode = "light"
-            self.root.configure(bg="#f0f0f0")
-            self.title_bar.configure(bg="#ddd")
-            self.title_label.configure(bg="#ddd", fg="#000")
-            self.update_styles()
-            self.mode_button.config(text="切换为夜间模式")
+            self.root.configure(bg="#f0f0f0")  # 主背景浅灰色
+            self.title_bar.configure(bg="#f8f8f8")  # 顶部栏更浅灰色
+            self.title_label.configure(bg="#f8f8f8", fg="#000")  # 标题字体为黑色
+
+            # 输入框样式
+            self.entry_task.configure(bg="#fff", fg="#000", insertbackground="#000",
+                                      highlightbackground="#ccc", highlightcolor="#aaa")
+
+            # 按钮样式
+            self.button_add.configure(bg="#007acc", fg="#fff", activebackground="#005f99")
+            self.button_delete.configure(bg="#007acc", fg="#fff", activebackground="#005f99")
+            self.mode_button.config(text="切换为夜间模式", bg="#007acc", fg="#fff", activebackground="#005f99")
+
+            # 分割线颜色调整
+            self.divider.configure(bg="#f0f0f0", fg="#aaa")  # 更浅灰色
+
+            # 时间和天气栏样式
+            self.time_frame.configure(bg="#f0f0f0")
+            self.time_label.configure(bg="#f0f0f0", fg="#000")
+            self.weather_label.configure(bg="#f0f0f0", fg="#000")
+            # 更新 Canvas 和 Scrollbar 的背景颜色
+            self.canvas.configure(bg=self.root.cget("bg"))
+            self.task_listbox.configure(bg=self.root.cget("bg"))
+            self.scrollbar.configure(bg=self.root.cget("bg"))
+
+
         else:
             self.mode = "dark"
-            self.root.configure(bg="#1e1e1e")
-            self.title_bar.configure(bg="#333")
-            self.title_label.configure(bg="#333", fg="#fff")
-            self.update_styles()
-            self.mode_button.config(text="切换为白天模式")
+            self.root.configure(bg="#1e1e1e")  # 主背景深色
+            self.title_bar.configure(bg="#333")  # 顶部栏深色
+            self.title_label.configure(bg="#333", fg="#fff")  # 标题字体白色
+
+            # 输入框样式
+            self.entry_task.configure(bg="#333", fg="#fff", insertbackground="#fff",
+                                      highlightbackground="#555", highlightcolor="#777")
+
+            # 按钮样式
+            self.button_add.configure(bg="#007acc", fg="#fff", activebackground="#005f99")
+            self.button_delete.configure(bg="#007acc", fg="#fff", activebackground="#005f99")
+            self.mode_button.config(text="切换为白天模式", bg="#007acc", fg="#fff", activebackground="#005f99")
+
+            # 分割线颜色调整
+            self.divider.configure(bg="#1e1e1e", fg="#555")  # 深灰色
+
+            # 时间和天气栏样式
+            self.time_frame.configure(bg="#1e1e1e")
+            self.time_label.configure(bg="#1e1e1e", fg="#fff")
+            self.weather_label.configure(bg="#1e1e1e", fg="#fff")
+
         self.update_task_listbox()
 
     def update_styles(self):
