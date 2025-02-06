@@ -112,8 +112,9 @@ class NetworkTestThread(QThread):
     def __init__(self, region):
         super().__init__()
         self.region = region
+        self.count = 100
 
-    def ping_host(self, host, count=100):
+    def ping_host(self, host, count):
         """使用 scapy 进行 Ping 测试并统计丢包率和延时"""
         loss_rate = 100
         avg_time = -1
@@ -124,7 +125,7 @@ class NetworkTestThread(QThread):
         for _ in range(count):
             start_time = time.time()
             packet = IP(dst=host) / ICMP()
-            response = sr1(packet, timeout=2, verbose=False)
+            response = sr1(packet, timeout=4, verbose=False)
 
             if response:
                 success_count += 1
@@ -147,14 +148,13 @@ class NetworkTestThread(QThread):
 
     def run(self):
         results = []
-        hosts = []
 
         if self.region == "中国大陆":
             hosts = ["cloud-service.austinelec.com", "www.baidu.com"]
         else:
             hosts = ["cloud-service-us.austinelec.com", "8.8.8.8"]
 
-        total_pings = len(hosts) * 100  # 假设每个主机 ping 100 次
+        total_pings = len(hosts) * self.count  # 假设每个主机 ping 100 次
         completed_pings = 0
         stats = {}
 
@@ -162,8 +162,8 @@ class NetworkTestThread(QThread):
             total_loss = 0
             total_time = 0
             max_time = 0
-            for i in range(100):  # 每个主机 ping 100 次
-                loss, avg, max_t, result = self.ping_host(host, count=1)
+            for i in range(self.count):  # 每个主机 ping 100 次
+                loss, avg, max_t, result = self.ping_host(host, self.count)
                 total_loss += loss
                 if avg > 0:
                     total_time += avg
