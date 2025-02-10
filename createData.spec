@@ -1,14 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_dynamic_libs
-
-binaries = []
-binaries += collect_dynamic_libs('python312.dll')
 
 
 a = Analysis(
-    ['detect_network_environment.py'],
+    ['createData.py'],
     pathex=[],
-    binaries=binaries,
+    binaries=[],
     datas=[],
     hiddenimports=[],
     hookspath=[],
@@ -25,7 +21,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='detect_network_environment',
+    name='createData',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -38,6 +34,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='resource/netdetect.ico',
-    manifest="default.manifest"
+    icon=['resource\\post.ico'],
 )
