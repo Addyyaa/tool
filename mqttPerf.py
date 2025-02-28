@@ -1,10 +1,8 @@
-import ast
 import math
 import time
 import paho.mqtt.client as mqtt
 import threading
 import random
-import string
 import logging
 import json
 import argparse
@@ -13,49 +11,70 @@ import pandas as pd
 import os
 import uuid
 from datetime import datetime
-from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
-from colorama import Fore, Style, init
+from colorama import init
+import numpy as np
+import traceback
+import signal
+import concurrent.futures
+import sys
 
 # 配置锁，确保线程安全
-connect_time_lock = Lock()
-receive_msg_lock = Lock()
-publish_msg_lock = Lock()
-connection_stats_lock = Lock()
+connect_time_lock = threading.RLock()
+receive_msg_lock = threading.RLock()
+publish_msg_lock = threading.RLock()
+connection_stats_lock = threading.RLock()
+message_tracking_lock = threading.RLock()  # 添加消息跟踪锁
+
 
 class MQTTLoadTester:
     def __init__(self, config_file=None):
-        # 初始化配置
+        """初始化测试对象"""
+        # 先设置默认日志
+        self.setup_default_logging()
+        
+        # 加载配置
         self.config = self.load_config(config_file)
+        
+        # 根据配置设置日志
         self.setup_logging()
         
-        # 性能数据收集
-        self.connect_elapsed_time = []
-        self.connections_count = self.config["num_publishers"] + self.config["num_subscribers"]
-        self.sub_spend_time = {}
-        self.sub_spend_time_list = []
-        self.receive_msg_spend_time = {}
-        self.receive_msg_spend_time_list = []
-        self.receive_msg_count = []
-        self.publish_msg_count = []
+        # 测试运行状态
+        self.running = False
+        self.test_start_time = None
         
-        # 系统资源监控数据
-        self.resource_data = []
+        # 客户端列表
+        self.subscribers = []
+        self.publishers = []
+        self.heartbeats = []
         
-        # 性能数据记录
-        self.performance_data = []
+        # 线程锁
+        self.client_lock = threading.Lock()
+        self.qos_lock = threading.Lock()
         
-        # 消息丢失统计
-        self.message_ids = {}  # 用于跟踪已发送消息
-        self.received_ids = set()  # 用于跟踪已接收消息
+        # 连接统计
+        self.connect_elapsed_time = []  # 连接耗时(毫秒)
+        self.min_connect_time = float('inf')  # 最小连接时间，初始化为无穷大
+        self.max_connect_time = 0       # 最大连接时间
+        self.avg_connect_time = 0       # 平均连接时间
+        self.connection_failures = 0    # 连接失败次数
+        self.disconnections = 0         # 断开连接次数
+        self.reconnections = 0          # 重连次数
+        self.connection_times = {}      # 每个客户端的连接时间
         
-        # 连接状态统计
-        self.connection_failures = 0
-        self.disconnections = 0
-        self.reconnections = 0
-        self.connection_times = {}  # 每个客户端的连接时间
+        # 消息统计
+        self.publish_msg_count = []     # 发布的消息ID列表
+        self.receive_msg_count = []     # 接收到的消息ID列表
+        self.publish_msg_time = {}      # 发布消息的时间戳 {message_id: timestamp}
+        self.receive_msg_time = {}      # 接收消息的时间戳 {message_id: timestamp}
+        self.receive_msg_spend_time = {} # 接收消息延迟 {topic: [delay1, delay2, ...]}
+        self.sub_spend_time = {}        # 订阅延迟 {topic: [delay1, delay2, ...]}
         
-        # 消息延迟分布统计
+        # QoS统计
+        self.qos_success = {0: 0, 1: 0, 2: 0}  # 各QoS级别成功计数
+        self.qos_failure = {0: 0, 1: 0, 2: 0}  # 各QoS级别失败计数
+        
+        # 延迟分布统计
         self.latency_buckets = {
             "0-10ms": 0,
             "10-50ms": 0,
@@ -65,164 +84,168 @@ class MQTTLoadTester:
             ">1000ms": 0
         }
         
-        # QoS统计
-        self.qos_success = {0: 0, 1: 0, 2: 0}
-        self.qos_failure = {0: 0, 1: 0, 2: 0}
-        
-        # 错误统计
-        self.protocol_errors = 0
-        self.timeouts = 0
-        
-        # 客户端管理
-        self.subscribers = []
-        self.publishers = []
-        self.heartbeats = []
-        
-        # 测试开始时间
-        self.test_start_time = datetime.now()
-        
-        # 初始化主题订阅时间追踪
-        for topic in self.config["sub_topics"]:
-            self.sub_spend_time[topic] = []
-        
-        # 初始化消息接收时间追踪
-        for topic in self.config["sub_topics"]:
-            self.receive_msg_spend_time[topic] = []
-        
         # 初始化colorama
         init(autoreset=True)
-        
-        # 运行状态
-        self.running = True
-        
-    def load_config(self, config_file=None):
-        """加载配置"""          
-        # 默认配置
+
+    def setup_default_logging(self):
+        """设置默认日志系统"""
+        self.logger = logging.getLogger(__name__)
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - Line %(lineno)d - %(message)s')
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+            self.logger.setLevel(logging.INFO)
+
+    def setup_logging(self):
+        """根据配置设置完整的日志系统"""
+        # 如果已经有了默认日志系统，先清除
+        if hasattr(self, 'logger') and self.logger.handlers:
+            for handler in self.logger.handlers[:]:
+                self.logger.removeHandler(handler)
+
+        # 创建日志记录器
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG if self.config.get("debug", False) else logging.INFO)
+
+        # 控制台处理器
+        console_handler = logging.StreamHandler()
+        console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - Line %(lineno)d - %(message)s')
+        console_handler.setFormatter(console_formatter)
+        self.logger.addHandler(console_handler)
+
+        # 文件处理器（如果需要）
+        log_file = self.config.get("log_file")
+        if log_file:
+            file_handler = logging.FileHandler(log_file)
+            file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(file_formatter)
+            self.logger.addHandler(file_handler)
+
+    def load_config(self, config_file):
+        """加载配置文件"""
         default_config = {
             "broker": "139.224.192.36",
             "port": 1883,
             "username": "mqtttest",
             "password": "mqtttest2022",
-            "num_subscribers": 200,
-            "num_publishers": 200,
-            "num_heartbeats": 20,
-            "sub_topics": [
-                "/screen/magicframe/cloud/setplaymode[-flat]/mf50",
-                "/screen/magicframe/cloud/downloadpicture[-flat]/mf50",
-                "/screen/magicframe/cloud/setbrightness[-flat]/mf50",
-                "/screen/magicframe/cloud/setcolortemp[-flat]/mf50",
-                "/screen/magicframe/cloud/turnon[-flat]/mf50",
-                "/screen/magicframe/cloud/setsleepschedule[-flat]/mf50",
-                "/screen/magicframe/cloud/playsync[-flat]/mf50",
-                "/screen/magicframe/cloud/delvideo[-flat]/mf50",
-                "/screen/magicframe/cloud/delpicture[-flat]/mf50",
-                "/screen/magicframe/cloud/upgrade[-flat]/mf50",
-                "/screen/magicframe/cloud/broadcast[-flat]/mf50",
-                "/screen/magicframe/cloud/setscreengroupidandno[-flat]/mf50",
-                "/screen/magicframe/cloud/setvolume[-flat]/mf50",
-                "/screen/magicframe/cloud/setdirection[-flat]/mf50",
-                "/screen/magicframe/cloud/reset[-flat]/mf50",
-                "/screen/magicframe/cloud/settimezone[-flat]/mf50",
-            ],
-            "pub_topics": [
-                "/screen/magicframe/cloud/downloadpicture[-flat]/mf50"
-            ],
-            "heartbeat_topics": [
-                "mf50/screen/cloud/screengroupstatus[-flat]/"
-            ],
+            "num_subscribers": 10,
+            "num_publishers": 10,
+            "num_heartbeats": 10,
+            "qos_level": 1,
+            "test_duration": 20,
             "publish_interval": 1,
-            "heartbeat_interval": 30,
-            "qos_level": 2,
-            "report_interval": 10,
+            "heartbeat_interval": 5,
+            "pub_topics": ["/screen/magicframe/cloud/downloadpicture[-flat]/mf50"],
+            "sub_topics": ["/screen/magicframe/cloud/setplaymode[-flat]/mf50",
+                           "/screen/magicframe/cloud/downloadpicture[-flat]/mf50",
+                           "/screen/magicframe/cloud/setbrightness[-flat]/mf50",
+                           "/screen/magicframe/cloud/setcolortemp[-flat]/mf50",
+                           "/screen/magicframe/cloud/turnon[-flat]/mf50",
+                           "/screen/magicframe/cloud/setsleepschedule[-flat]/mf50",
+                           "/screen/magicframe/cloud/playsync[-flat]/mf50",
+                           "/screen/magicframe/cloud/delvideo[-flat]/mf50",
+                           "/screen/magicframe/cloud/delpicture[-flat]/mf50",
+                           "/screen/magicframe/cloud/upgrade[-flat]/mf50",
+                           "/screen/magicframe/cloud/broadcast[-flat]/mf50",
+                           "/screen/magicframe/cloud/setscreengroupidandno[-flat]/mf50",
+                           "/screen/magicframe/cloud/setvolume[-flat]/mf50",
+                           "/screen/magicframe/cloud/setdirection[-flat]/mf50",
+                           "/screen/magicframe/cloud/reset[-flat]/mf50",
+                           "/screen/magicframe/cloud/settimezone[-flat]/mf50", ],
+            "heartbeat_topics": ["mf50/screen/cloud/screengroupstatus[-flat]/"],
+            "excel_report_dir": "reports",
+            "max_threads": 200,
+            "debug": False,
+            "report_interval": 5,
             "resource_monitor_interval": 5,
-            "connection_timeout": 10,  # 连接超时时间
-            "keep_alive": 60,  # Keep Alive时间
-            "max_inflight": 100,  # 最大在途消息数
-            "excel_report_dir": "reports"  # Excel报告保存目录
+            "log_file": None,
+            "keep_alive": 60  # 添加keep_alive参数
         }
-        
-        if config_file:
+
+        if config_file and os.path.exists(config_file):
             try:
                 with open(config_file, 'r') as f:
                     user_config = json.load(f)
+                    # 更新默认配置
                     default_config.update(user_config)
+                    self.logger.info(f"已加载配置文件: {config_file}")
             except Exception as e:
-                print(f"加载配置文件失败: {e}")
-                
+                self.logger.error(f"加载配置文件出错: {e}")
+        else:
+            self.logger.warning("未找到配置文件，使用默认配置")
+
         return default_config
-    
-    def setup_logging(self):
-        """配置日志"""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - Line %(lineno)d - %(message)s'
-        )
-        self.logger = logging.getLogger(__name__)
-    
+
     def create_mqtt_client(self, client_id, subscribe=False):
         """创建MQTT客户端"""
         try:
-            # 转换client_id为字符串类型，避免编码问题
-            client_id = str(client_id)
+            # 创建客户端 - 使用MQTTv5
+            client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv5)
             
-            # 使用MQTTv5版本创建客户端并更新回调API版本
-            client = mqtt.Client(
-                client_id=client_id, 
-                protocol=mqtt.MQTTv5,
-                callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-                transport="tcp"  # 明确指定传输协议
-            )
-            
-            # 设置最大在途消息数
-            client.max_inflight_messages_set(self.config.get("max_inflight", 20))
-            
-            # 设置重连间隔和尝试次数
-            client.reconnect_delay_set(min_delay=1, max_delay=60)
-            
-            # 设置认证信息
-            if self.config["username"] and self.config["password"]:
-                client.username_pw_set(self.config["username"], self.config["password"])
-            
-            # 用户数据存储
+            # 创建用户数据
             userdata = {
-                "client_id": client_id,
-                "subscribe": subscribe,
-                "start_time": time.time(),
-                "connection_time": 0,
-                "connection_count": 0,
-                "reconnected": False,
-                "client_lock": threading.Lock()  # 为每个客户端添加锁
+                'client_id': client_id,
+                'start_time': time.time(),
+                'connection_count': 0,
+                'connection_time': 0
             }
             client.user_data_set(userdata)
             
-            # 设置回调函数 - 使用正确的参数数量
-            client.on_connect = lambda client, userdata, flags, reason_code, properties: self.on_connect(client, userdata, flags, reason_code, properties)
-            client.on_disconnect = lambda client, userdata, reasonCode, properties: self.on_disconnect(client, userdata, reasonCode, properties)
-            client.on_message = lambda client, userdata, msg: self.on_message(client, userdata, msg)
-            client.on_publish = lambda client, userdata, mid, reason_code, properties: self.on_publish(client, userdata, mid, reason_code, properties)
-            client.on_subscribe = lambda client, userdata, mid, reason_codes, properties: self.on_subscribe(client, userdata, mid, reason_codes, properties)
+            # 设置回调函数
+            client.on_connect = self.on_connect
+            client.on_disconnect = self.on_disconnect
+            client.on_message = self.on_message
+            client.on_publish = self.on_publish
+            client.on_subscribe = self.on_subscribe
+            client.on_log = self.on_log
             
-            # 添加错误日志回调
-            client.on_log = lambda client, userdata, level, buf: self.on_log(client, userdata, level, buf)
+            # 设置认证信息
+            if self.config.get("username") and self.config.get("password"):
+                client.username_pw_set(self.config["username"], self.config["password"])
             
-            # 连接到broker
-            client.connect_async(
-                self.config["broker"], 
-                self.config["port"], 
-                keepalive=self.config["keep_alive"]
-            )
+            # 记录连接开始时间
+            start_time = time.time()
+            with connect_time_lock:
+                self.connection_times[client_id] = start_time
             
-            # 使用线程安全方式启动客户端循环
-            client.loop_start()
+            # 设置keep_alive参数
+            keep_alive = self.config.get("keep_alive", 60)
             
-            # 等待连接建立一个短暂的时间
-            time.sleep(0.1)
-            
-            return client
+            try:
+                # 尝试连接MQTT代理
+                self.logger.info(f"尝试连接到 {self.config['broker']}:{self.config['port']}")
+                client.connect_async(self.config["broker"], self.config["port"], keepalive=keep_alive)
+                
+                # 启动网络循环
+                client.loop_start()
+                
+                # 等待连接完成
+                time.sleep(0.5)
+                
+                # 如果是订阅者，订阅主题
+                if subscribe:
+                    print(f"为 {client_id} 订阅主题...")
+                    # 订阅发布主题
+                    for topic in self.config["pub_topics"]:
+                        client.subscribe(topic, qos=self.config.get("qos_level", 0))
+                        print(f"订阅者 {client_id} 订阅主题: {topic}")
+                        self.logger.info(f"订阅者 {client_id} 订阅主题: {topic}")
+                    
+                    # 也订阅订阅主题列表中的主题
+                    for topic in self.config["sub_topics"]:
+                        client.subscribe(topic, qos=self.config.get("qos_level", 0))
+                        print(f"订阅者 {client_id} 订阅主题: {topic}")
+                        self.logger.info(f"订阅者 {client_id} 订阅主题: {topic}")
+                
+                return client
+            except Exception as e:
+                self.logger.error(f"连接失败: {e}. 请确认MQTT代理 {self.config['broker']}:{self.config['port']} 正在运行。")
+                return None
         except Exception as e:
             self.logger.error(f"创建MQTT客户端失败: {e}")
-            raise
-    
+            return None
+
     def connect_client(self, client, subscribe=False):
         """连接MQTT客户端"""
         try:
@@ -245,323 +268,401 @@ class MQTTLoadTester:
             self.logger.error(f"MQTT 客户端 {client._client_id} 连接失败: {e}")
             with connection_stats_lock:
                 self.connection_failures += 1
-    
-    def on_connect(self, client, userdata, flags, reason_code, properties):
-        """连接回调函数"""
-        self.logger.info(f"{client._client_id} 连接成功，返回码: {reason_code}")
-        if reason_code == mqtt.CONNACK_ACCEPTED:
-            self.logger.info(f"MQTT 客户端 {client._client_id} 已连接")
-            end_time = time.time()
-            token_time = round((end_time - userdata['start_time']) * 1000, 2)
-            
-            with connect_time_lock:
-                self.connect_elapsed_time.append(token_time)
-                
-            with connection_stats_lock:
-                # 更新连接统计
-                userdata["connection_time"] = time.time()
-                userdata["connection_count"] += 1
-                
-                # 记录连接事件
-                if not hasattr(self, 'connection_events'):
-                    self.connection_events = []
-                
-                self.connection_events.append({
-                    "client_id": userdata["client_id"],
-                    "event": "connect",
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "reason_code": reason_code,
-                    "connection_time_ms": token_time
-                })
-                
-                if userdata["reconnected"]:
-                    self.reconnections += 1
-            
-            self.logger.info(f"{client._client_id} 连接耗时：{token_time} ms")
-            if userdata["subscribe"] and userdata["reconnected"]:
-                userdata["reconnected"] = False
-                for topic in self.config["sub_topics"]:
-                    topic = client._client_id.decode('utf-8') + topic
-                    client.subscribe(topic, qos=self.config["qos_level"])
-                    self.logger.info(f"==========>{client._client_id} 重新订阅主题：{topic}")
-        else:
-            with connection_stats_lock:
-                self.connection_failures += 1
-                
-                # 记录失败事件
-                if not hasattr(self, 'connection_events'):
-                    self.connection_events = []
-                
-                self.connection_events.append({
-                    "client_id": userdata["client_id"],
-                    "event": "connection_failure",
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "reason_code": reason_code
-                })
-    
-    def on_disconnect(self, client, userdata, reasonCode, properties=None):
-        """断开连接回调函数"""
-        if reasonCode != 0:
-            self.logger.error(f"{client._client_id} 连接断开，返回码: {reasonCode}")
-        else:
-            self.logger.info(f"{client._client_id} 正常断开连接")
-        
-        with connection_stats_lock:
-            self.disconnections += 1
-            userdata["disconnection_time"] = time.time()
-            userdata["reconnected"] = True
-            
-            # 记录断开连接事件
-            if not hasattr(self, 'connection_events'):
-                self.connection_events = []
-            
-            self.connection_events.append({
-                "client_id": userdata["client_id"],
-                "event": "disconnect",
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "reason_code": reasonCode,
-                "connection_duration": userdata["disconnection_time"] - userdata["connection_time"] if userdata["connection_time"] else 0
-            })
-            
-        if properties:
-            self.logger.error(f"断开连接时的属性: {properties}")
-    
-    def on_message(self, client, userdata, msg):
-        """消息回调函数"""
+
+    def on_connect(self, client, userdata, flags, reason_code, properties=None):
+        """处理连接事件 (MQTTv5版本)"""
         try:
-            payload = msg.payload.decode('utf-8')
-            message_data = ast.literal_eval(payload)
-            timestamp = message_data['time']
-            
-            # 检查消息是否包含ID
-            if 'id' in message_data:
-                message_id = message_data['id']
-                self.track_message(message_id, is_sent=False)
-            
-            end_time = time.time()
-            spend_time = round((end_time - timestamp) * 1000, 2)
-            key = msg.topic.replace(client._client_id.decode('utf-8'), '')
-            
-            with receive_msg_lock:
-                self.receive_msg_spend_time[key].append(spend_time)
-                self.receive_msg_count.append(1)
-                # 更新延迟分布
-                self.update_latency_bucket(spend_time)
-                
-            self.logger.info(f"{client._client_id} 收到消息，耗时：{spend_time} ms：{payload}")
+            client_id = userdata.get('client_id', 'unknown')
+
+            # 计算连接耗时
+            current_time = time.time()
+
+            with connect_time_lock:
+                if client_id in self.connection_times:
+                    start_time = self.connection_times[client_id]
+                    elapsed = (current_time - start_time) * 1000  # 转换为毫秒
+
+                    # 添加到连接耗时列表
+                    with connection_stats_lock:
+                        self.connect_elapsed_time.append(elapsed)
+                        
+                        # 更新连接统计信息
+                        if elapsed < self.min_connect_time:
+                            self.min_connect_time = elapsed
+                        if elapsed > self.max_connect_time:
+                            self.max_connect_time = elapsed
+                        
+                        # 计算平均连接时间
+                        total_elapsed = sum(self.connect_elapsed_time)
+                        total_connections = len(self.connect_elapsed_time)
+                        self.avg_connect_time = total_elapsed / total_connections if total_connections > 0 else 0
+
+                    if reason_code == 0:
+                        self.logger.info(f"客户端 {client_id} 连接成功，耗时 {elapsed:.2f}毫秒")
+                        print(f"连接成功: {client_id}, 耗时 {elapsed:.2f}毫秒")
+                        
+                        # 订阅者重新订阅主题
+                        if client_id.startswith("conn_subscriber_"):
+                            for topic in self.config["pub_topics"]:
+                                client.subscribe(topic, qos=self.config.get("qos_level", 0))
+                                print(f"连接后重新订阅: {client_id} -> {topic}")
+                            for topic in self.config["sub_topics"]:
+                                client.subscribe(topic, qos=self.config.get("qos_level", 0))
+                                print(f"连接后重新订阅: {client_id} -> {topic}")
+                    else:
+                        self.logger.warning(f"客户端 {client_id} 连接失败，返回码: {reason_code}")
+                        with connection_stats_lock:
+                            self.connection_failures += 1
+
+            # 打印当前连接统计信息
+            with connection_stats_lock:
+                print(f"连接统计 - 最小: {self.min_connect_time:.2f}毫秒, 最大: {self.max_connect_time:.2f}毫秒, " +
+                      f"平均: {self.avg_connect_time:.2f}毫秒, 总连接数: {len(self.connect_elapsed_time)}")
+
         except Exception as e:
-            self.logger.error(f"处理接收消息时出错: {e}")
-            self.protocol_errors += 1
-    
-    def update_latency_bucket(self, latency_ms):
-        """更新延迟分布统计"""
-        with receive_msg_lock:
-            if latency_ms <= 10:
-                self.latency_buckets["0-10ms"] += 1
-            elif latency_ms <= 50:
-                self.latency_buckets["10-50ms"] += 1
-            elif latency_ms <= 100:
-                self.latency_buckets["50-100ms"] += 1
-            elif latency_ms <= 500:
-                self.latency_buckets["100-500ms"] += 1
-            elif latency_ms <= 1000:
-                self.latency_buckets["500-1000ms"] += 1
-            else:
-                self.latency_buckets[">1000ms"] += 1
-    
-    def on_subscribe(self, client, userdata, mid, reason_code_list, properties):
-        """订阅回调函数"""
-        if "Granted" in str(reason_code_list[0]):
-            self.logger.info(f"{client._client_id} 订阅成功，reason_code_list：{reason_code_list}, mid：{mid}")
-            end_time = time.time()
-            token_time = round((end_time - userdata['start_time']) * 1000, 2)
+            self.logger.error(f"处理连接事件时出错: {e}")
+
+    def on_disconnect(self, client, userdata, rc):
+        """处理断开连接事件 (MQTTv5版本)"""
+        try:
+            client_id = userdata.get('client_id', 'unknown')
             
-            if mid > 0 and (mid - 1) < len(self.config["sub_topics"]):
-                with connect_time_lock:
-                    self.sub_spend_time[self.config["sub_topics"][mid - 1]].append(token_time)
+            # 只有在测试运行期间且不是预期的断开才计数
+            if self.running and not self.test_ended:
+                with connection_stats_lock:
+                    self.disconnections += 1
                     
-            self.logger.info(f"{client._client_id} 订阅耗时：{token_time} ms")
-        else:
-            self.logger.error(f"{client._client_id} 订阅失败，reason_code_list：{reason_code_list}")
-            self.qos_failure[self.config["qos_level"]] += 1
-    
-    def on_publish(self, client, userdata, mid, reason_code, properties):
-        """发布回调函数"""
-        with publish_msg_lock:
-            qos = self.config["qos_level"]  # 当前配置的QoS级别
-            self.qos_success[qos] += 1
-    
+                if rc == 0:
+                    self.logger.info(f"客户端 {client_id} 正常断开连接")
+                else:
+                    self.logger.warning(f"客户端 {client_id} 意外断开连接，返回码: {rc}")
+                    print(f"警告: 客户端 {client_id} 意外断开连接，返回码: {rc}")
+            else:
+                # 测试已结束或未开始，这是预期的断开
+                self.logger.info(f"客户端 {client_id} 在测试{'结束后' if self.test_ended else '开始前'}断开连接")
+        except Exception as e:
+            self.logger.error(f"处理断开连接事件时出错: {e}")
+
+    def on_message(self, client, userdata, msg):
+        """处理接收到的消息 (MQTTv5版本)"""
+        try:
+            client_id = userdata['client_id'] if userdata and 'client_id' in userdata else 'unknown'
+            topic = msg.topic
+            payload = msg.payload.decode('utf-8')
+            
+            # 当前时间
+            received_time = time.time()
+            
+            # 打印原始接收到的消息
+            print(f"\n===== 订阅者收到消息 =====")
+            print(f"订阅者: {client_id}")
+            print(f"主题: {topic}")
+            print(f"内容: {payload[:150]}{'...' if len(payload) > 150 else ''}")
+            print("==========================\n")
+            
+            # 记录到日志
+            self.logger.info(f"订阅者 {client_id} 从主题 {topic} 接收到消息")
+            
+            # 处理消息，尝试解析JSON
+            try:
+                message_data = json.loads(payload)
+                message_id = message_data.get("id", "unknown")
+                send_time = message_data.get("timestamp", 0)
+                
+                # 计算消息延迟(毫秒)
+                latency_ms = (received_time - send_time) * 1000 if send_time > 0 else 0
+                
+                # 记录接收到的消息
+                with receive_msg_lock:
+                    if message_id not in self.receive_msg_count:
+                        self.receive_msg_count.append(message_id)
+                        self.receive_msg_time[message_id] = received_time
+                        
+                        # 更新QoS统计，假设所有消息都是成功的
+                        qos = msg.qos
+                        with self.qos_lock:
+                            if qos in self.qos_success:
+                                self.qos_success[qos] += 1
+                        
+                        # 记录每个主题的接收延迟
+                        if topic not in self.receive_msg_spend_time:
+                            self.receive_msg_spend_time[topic] = []
+                        
+                        self.receive_msg_spend_time[topic].append(latency_ms)
+                        
+                        # 更新延迟分布统计
+                        self.update_latency_distribution(latency_ms)
+                        
+                        print(f"收到新消息! ID: {message_id}, 延迟: {latency_ms:.2f}ms, 当前接收总数: {len(self.receive_msg_count)}")
+                        
+            except json.JSONDecodeError:
+                # 处理非JSON消息
+                self.logger.info(f"接收到非JSON格式消息")
+                with receive_msg_lock:
+                    # 对于非JSON消息，使用随机ID防止重复计数
+                    message_id = f"non-json_{time.time()}_{random.randint(1,1000)}"
+                    self.receive_msg_count.append(message_id)
+                    self.receive_msg_time[message_id] = received_time
+                    print(f"收到非JSON消息! 当前接收总数: {len(self.receive_msg_count)}")
+            
+        except Exception as e:
+            self.logger.error(f"处理消息时出错: {e}")
+            traceback.print_exc()
+
+    def update_latency_distribution(self, latency_ms):
+        """更新延迟分布统计"""
+        try:
+            with receive_msg_lock:
+                if latency_ms <= 10:
+                    self.latency_buckets["0-10ms"] += 1
+                elif latency_ms <= 50:
+                    self.latency_buckets["10-50ms"] += 1
+                elif latency_ms <= 100:
+                    self.latency_buckets["50-100ms"] += 1
+                elif latency_ms <= 500:
+                    self.latency_buckets["100-500ms"] += 1
+                elif latency_ms <= 1000:
+                    self.latency_buckets["500-1000ms"] += 1
+                else:
+                    self.latency_buckets[">1000ms"] += 1
+                
+                total = sum(self.latency_buckets.values())
+                if total > 0 and total % 10 == 0:  # 每10条消息打印一次
+                    print("\n----- 延迟分布 -----")
+                    for bucket, count in self.latency_buckets.items():
+                        percentage = (count / total) * 100 if total > 0 else 0
+                        print(f"{bucket}: {count} ({percentage:.2f}%)")
+                    print("--------------------\n")
+        except Exception as e:
+            self.logger.error(f"更新延迟分布时出错: {e}")
+
+    def on_subscribe(self, client, userdata, mid, reason_codes=None, properties=None):
+        """订阅回调函数 - 适用于 MQTTv5"""
+        try:
+            # 获取返回代码 - 正确处理不同参数情况
+            result_code = 0
+            if reason_codes is not None:
+                if isinstance(reason_codes, list) and reason_codes:
+                    result_code = reason_codes[0]
+                else:
+                    result_code = reason_codes
+            
+            client_id = userdata.get('client_id', 'unknown') if userdata else 'unknown'
+            
+            if result_code < 128:  # 成功代码小于128
+                self.logger.info(f"{client_id} 订阅成功，返回码：{result_code}, mid：{mid}")
+                print(f"{client_id} 订阅成功，返回码：{result_code}, mid：{mid}")
+                
+                # 计算订阅耗时
+                if userdata and 'start_time' in userdata:
+                    end_time = time.time()
+                    token_time = round((end_time - userdata['start_time']) * 1000, 2)
+                    
+                    # 不访问properties对象的内容
+                    self.logger.info(f"{client_id} 订阅耗时：{token_time} ms")
+                    print(f"{client_id} 订阅耗时：{token_time} ms")
+                    
+                    # 使用通用主题标识符
+                    with self.qos_lock:
+                        generic_topic = f"topic_mid_{mid}"
+                        if generic_topic not in self.sub_spend_time:
+                            self.sub_spend_time[generic_topic] = []
+                        self.sub_spend_time[generic_topic].append(token_time)
+            else:
+                self.logger.error(f"{client_id} 订阅失败，返回码：{result_code}")
+                print(f"警告: {client_id} 订阅失败，返回码：{result_code}")
+                with self.qos_lock:
+                    qos = self.config.get("qos_level", 0)
+                    self.qos_failure[qos] += 1
+        except Exception as e:
+            self.logger.error(f"处理订阅回调时出错: {e}")
+            print(f"订阅回调错误: {e}")
+
+    def on_publish(self, client, userdata, mid):
+        """发布回调函数 (MQTTv5版本)"""
+        try:
+            with publish_msg_lock:
+                qos = self.config["qos_level"]  # 当前配置的QoS级别
+                self.qos_success[qos] += 1
+                
+                # 添加调试日志
+                if self.config.get("debug", False):
+                    client_id = userdata.get('client_id', 'unknown') if userdata else 'unknown'
+                    self.logger.debug(f"消息发布成功: 客户端={client_id}, mid={mid}")
+        except Exception as e:
+            self.logger.error(f"处理发布回调时出错: {e}")
+
     def on_publish_failure(self, client, userdata, mid):
         """发布失败回调函数"""
         with publish_msg_lock:
             qos = self.config["qos_level"]  # 当前配置的QoS级别
             self.qos_failure[qos] += 1
             self.logger.error(f"{client._client_id} 消息发布失败，mid: {mid}")
-    
-    def publish_messages(self, client, topic, interval, msg_type="测试消息"):
-        """发布消息函数"""
+
+    def publish_messages(self, client, topic, interval, msg_type="消息"):
+        """定期发布消息"""
         try:
-            userdata = client._userdata
-            client_id = userdata["client_id"]
+            counter = 0
+            last_publish_time = time.time()
+            
+            client_id = client._client_id.decode('utf-8') if hasattr(client, '_client_id') else 'unknown'
+            
+            # 添加调试日志
+            self.logger.info(f"发布者 {client_id} 开始发布消息到主题: {topic}")
+            print(f"发布者 {client_id} 开始发布消息到主题: {topic}")
+            
+            # 确保消息能被订阅者接收 - 设置较小的发布间隔
+            real_interval = min(interval, 1.0)  # 最大1秒
             
             while self.running:
                 try:
-                    # 使用客户端特定的锁保护发布操作
-                    with userdata["client_lock"]:
-                        # 创建唯一消息ID
-                        message_id = str(uuid.uuid4())
+                    # 当前时间
+                    now = time.time()
+                    
+                    # 检查是否到达发送间隔
+                    if now - last_publish_time >= real_interval:
+                        # 更新上次发布时间
+                        last_publish_time = now
+                        
+                        # 创建消息ID
+                        message_id = f"{client_id}_{counter}"
                         
                         # 构建消息内容
-                        payload = {
-                            'time': time.time(),
-                            'msg': ''.join(random.choices(string.ascii_letters + string.digits, k=100)),
-                            'id': message_id
+                        message = {
+                            "id": message_id,
+                            "client": client_id,
+                            "type": msg_type,
+                            "timestamp": now,
+                            "seq": counter,
+                            "data": "测试消息内容 " * 5  # 添加一些内容
                         }
                         
-                        # 转换为JSON并发布
-                        message = json.dumps(payload)
+                        # 转换为JSON
+                        message_json = json.dumps(message)
                         
-                        # 记录发送的消息ID
-                        self.track_message(message_id, is_sent=True)
+                        # 打印发布的消息
+                        print(f"\n----- 发布新消息 -----")
+                        print(f"发布者: {client_id}")
+                        print(f"主题: {topic}")
+                        print(f"内容: {message_json[:150]}...")
+                        print("------------------------\n")
                         
-                        # 发布消息，确保不重叠
-                        result = client.publish(
-                            topic, 
-                            message, 
-                            qos=self.config["qos_level"]
-                        )
+                        # 使用客户端锁保护发布操作
+                        with self.client_lock:
+                            # 发布消息到指定主题
+                            qos = self.config.get("qos_level", 0)
+                            result = client.publish(topic, message_json, qos=qos)
+                            
+                            # 记录发布消息
+                            with publish_msg_lock:
+                                if message_id not in self.publish_msg_count:
+                                    self.publish_msg_count.append(message_id)
+                                    self.publish_msg_time[message_id] = now
+                                    
+                                    # 更新计数器和统计
+                                    if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                                        with self.qos_lock:
+                                            self.qos_success[qos] += 1
+                                    else:
+                                        with self.qos_lock:
+                                            self.qos_failure[qos] += 1
+                            
+                        # 更新计数器
+                        counter += 1
                         
-                        # 使用锁保护共享数据
-                        with publish_msg_lock:
-                            self.publish_msg_count.append(1)
-                        
-                        # 记录QoS成功/失败
-                        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                            self.qos_success[self.config["qos_level"]] += 1
-                        else:
-                            self.qos_failure[self.config["qos_level"]] += 1
-                        
-                        # 仅在开发环境或低频率下记录详细日志，避免I/O瓶颈
-                        if random.random() < 0.01:  # 仅记录1%的消息，减少日志开销
-                            self.logger.info(f"{client_id} 发布消息：{payload}, 主题：{topic}")
-                        
-                except Exception as e:
-                    self.logger.error(f"发布消息时出错 {client_id}: {e}")
-                    self.protocol_errors += 1
+                    # 睡眠一小段时间，确保订阅者有时间处理消息
+                    time.sleep(0.2)
                     
-                # 随机化发布间隔，防止消息风暴
-                jitter = random.uniform(0.8, 1.2)  # 增加20%的随机性
-                time.sleep(interval * jitter)
+                    # 打印发布统计
+                    if counter % 10 == 0:
+                        print(f"发布者 {client_id} 已发布 {counter} 条消息")
+                    
+                except Exception as e:
+                    self.logger.error(f"发布单条消息时出错: {e}")
+                    traceback.print_exc()
+                    time.sleep(1)  # 出错后暂停一下
                 
         except Exception as e:
-            self.logger.error(f"发布消息线程出错: {e}")
-    
+            self.logger.error(f"发布消息线程出错 {client_id}: {e}")
+            traceback.print_exc()
+
     def monitor_resources(self):
         """监控系统资源使用情况"""
-        while self.running:
-            try:
-                cpu_percent = psutil.cpu_percent()
+        try:
+            interval = self.config.get("resource_monitor_interval", 5)  # 使用get并提供默认值
+
+            while self.running:
+                cpu_percent = psutil.cpu_percent(interval=0.1)
                 memory_percent = psutil.virtual_memory().percent
-                # 网络IO统计
+
+                # 获取网络统计
                 net_io = psutil.net_io_counters()
-                
-                # 保存资源使用数据用于报告
+                bytes_sent = net_io.bytes_sent
+                bytes_recv = net_io.bytes_recv
+
+                # 记录数据
                 self.resource_data.append({
-                    'timestamp': datetime.now(),
-                    'cpu_percent': cpu_percent,
-                    'memory_percent': memory_percent,
-                    'bytes_sent': net_io.bytes_sent,
-                    'bytes_recv': net_io.bytes_recv,
-                    'packets_sent': net_io.packets_sent,
-                    'packets_recv': net_io.packets_recv
+                    '时间戳': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'CPU使用率': cpu_percent,
+                    '内存使用率': memory_percent,
+                    '网络发送': bytes_sent / 1024,  # 转换为KB
+                    '网络接收': bytes_recv / 1024  # 转换为KB
                 })
-                
+
+                # 记录日志
                 self.logger.info(f"系统资源使用: CPU {cpu_percent}%, 内存 {memory_percent}%, "
-                                 f"网络发送 {net_io.bytes_sent/1024:.2f}KB, 接收 {net_io.bytes_recv/1024:.2f}KB")
-                
-                # 如果资源使用过高，发出警告
-                if cpu_percent > 90 or memory_percent > 90:
-                    self.logger.warning(f"系统资源使用率过高！CPU: {cpu_percent}%, 内存: {memory_percent}%")
-                    
-                time.sleep(self.config["resource_monitor_interval"])
-            except Exception as e:
-                self.logger.error(f"监控资源时出错: {e}")
-    
+                                 f"网络发送 {bytes_sent / 1024:.2f}KB, 接收 {bytes_recv / 1024:.2f}KB")
+
+                time.sleep(interval)
+        except Exception as e:
+            self.logger.error(f"监控资源时出错: {e}")
+
     def periodic_report(self):
         """定期生成性能报告"""
-        start_time = time.time()
-        prev_msg_count = 0
-        prev_pub_count = 0
-        
-        while self.running:
-            try:
-                time.sleep(self.config["report_interval"])
-                
-                current_time = time.time()
-                elapsed = current_time - start_time
-                
-                with receive_msg_lock:
-                    current_msg_count = len(self.receive_msg_count)
-                
-                with publish_msg_lock:
-                    current_pub_count = len(self.publish_msg_count)
-                
-                msg_rate = (current_msg_count - prev_msg_count) / self.config["report_interval"]
-                pub_rate = (current_pub_count - prev_pub_count) / self.config["report_interval"]
-                
-                # 计算当前时间窗口的消息丢失率
-                window_published = current_pub_count - prev_pub_count
-                window_received = current_msg_count - prev_msg_count
-                window_loss = max(0, window_published - window_received)
-                window_loss_rate = (window_loss / window_published * 100) if window_published > 0 else 0
-                
-                # 保存性能数据用于报告
-                self.performance_data.append({
-                    'timestamp': datetime.now(),
-                    'elapsed_time': elapsed,
-                    'msg_rate': msg_rate,
-                    'pub_rate': pub_rate,
-                    'window_loss_rate': window_loss_rate,
-                    'total_received': current_msg_count,
-                    'total_published': current_pub_count,
-                    'active_connections': self.connections_count - self.disconnections + self.reconnections,
-                    'disconnections': self.disconnections
-                })
-                
-                prev_msg_count = current_msg_count
-                prev_pub_count = current_pub_count
-                
-                self.logger.info(f"性能报告: 运行时间 {elapsed:.2f}秒")
-                self.logger.info(f"消息接收速率: {msg_rate:.2f}条/秒, 总接收: {current_msg_count}条")
-                self.logger.info(f"消息发布速率: {pub_rate:.2f}条/秒, 总发布: {current_pub_count}条")
-                self.logger.info(f"当前时间窗口消息丢失率: {window_loss_rate:.2f}%")
-                self.logger.info(f"活动连接数: {self.connections_count - self.disconnections + self.reconnections}, 断开连接数: {self.disconnections}")
-            except Exception as e:
-                self.logger.error(f"生成性能报告时出错: {e}")
-    
+        try:
+            interval = self.config.get("report_interval", 5)
+            last_report_time = time.time()
+
+            while self.running:
+                now = time.time()
+
+                # 每隔指定时间生成一次报告
+                if now - last_report_time >= interval:
+                    last_report_time = now
+
+                    # 只生成性能报告，不生成Excel报告
+                    self.generate_performance_report()
+
+                    # 不在此处生成Excel报告，仅在测试结束时生成
+                    # self.generate_excel_report()
+
+                time.sleep(1)
+        except Exception as e:
+            self.logger.error(f"生成性能报告时出错: {e}")
+
     def start_mqtt_clients(self):
         """启动MQTT客户端"""
         # 使用线程池管理
         executor = ThreadPoolExecutor(max_workers=min(200, self.connections_count + 10))
-        
+
         try:
             # 启动资源监控
             monitor_thread = threading.Thread(target=self.monitor_resources)
             monitor_thread.daemon = True
             monitor_thread.start()
-            
+
             # 启动性能报告线程
             report_thread = threading.Thread(target=self.periodic_report)
             report_thread.daemon = True
             report_thread.start()
-            
+
             # 启动订阅客户端
             for i in range(self.config["num_subscribers"]):
                 client_id = f"conn_subscriber_{i + 1}"
                 client = self.create_mqtt_client(client_id, subscribe=True)
                 self.connect_client(client, subscribe=True)
                 self.subscribers.append(client)
-            
+
             # 启动发布客户端
             for i in range(self.config["num_publishers"]):
                 client_id = f"conn_publisher_{i + 1}"
@@ -570,20 +671,21 @@ class MQTTLoadTester:
                 self.connect_client(client)
                 future = executor.submit(self.publish_messages, client, pub_topic, self.config["publish_interval"])
                 self.publishers.append((client, future))
-            
+
             # 启动心跳报文发布客户端
             for i in range(self.config["num_heartbeats"]):
                 client_id = f"conn_heartbeat_{i + 1}"
                 pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
                 client = self.create_mqtt_client(client_id)
                 self.connect_client(client)
-                future = executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"], "心跳包")
+                future = executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
+                                         "心跳包")
                 self.heartbeats.append((client, future))
-            
+
             # 保持主线程活跃
             while True:
                 time.sleep(1)
-                
+
         except KeyboardInterrupt:
             self.logger.info("收到中断信号，正在终止测试...")
             self.running = False
@@ -597,56 +699,108 @@ class MQTTLoadTester:
             self.generate_excel_report()  # 生成Excel报告
             self.cleanup()
             executor.shutdown(wait=False)
-    
+
     def cleanup(self):
-        """清理资源"""
-        self.logger.info("正在清理资源...")
-        
-        # 断开所有客户端连接
-        for client in self.subscribers:
-            try:
-                client.disconnect()
-                client.loop_stop()
-            except Exception as e:
-                self.logger.error(f"断开订阅客户端连接时出错: {e}")
-        
-        for client, _ in self.publishers:
-            try:
-                client.disconnect()
-                client.loop_stop()
-            except Exception as e:
-                self.logger.error(f"断开发布客户端连接时出错: {e}")
-        
-        for client, _ in self.heartbeats:
-            try:
-                client.disconnect()
-                client.loop_stop()
-            except Exception as e:
-                self.logger.error(f"断开心跳客户端连接时出错: {e}")
-    
+        """清理资源，关闭所有客户端连接"""
+        try:
+            self.logger.info("正在清理资源...")
+
+            # 关闭所有订阅者客户端
+            for client in self.subscribers:
+                try:
+                    client.disconnect()
+                    client.loop_stop()
+                except Exception as e:
+                    self.logger.debug(f"断开订阅者连接时出错: {e}")
+
+            # 关闭所有发布者客户端
+            for client in self.publishers:
+                try:
+                    client.disconnect()
+                    client.loop_stop()
+                except Exception as e:
+                    self.logger.debug(f"断开发布者连接时出错: {e}")
+
+            # 关闭所有心跳客户端
+            for client in self.heartbeats:
+                try:
+                    client.disconnect()
+                    client.loop_stop()
+                except Exception as e:
+                    self.logger.debug(f"断开心跳客户端连接时出错: {e}")
+
+            # 给客户端一些时间正常关闭
+            time.sleep(0.5)
+
+            self.logger.info("所有MQTT客户端已停止")
+
+        except Exception as e:
+            self.logger.error(f"清理资源时出错: {e}")
+
+    def handle_interrupt(self, signum, frame):
+        """处理中断信号，安全地终止测试"""
+        print("\n收到中断信号，正在安全退出...")
+        self.logger.info("收到中断信号，正在安全退出...")
+
+        # 标记测试停止
+        self.running = False
+
+        # 生成最终性能报告
+        try:
+            self.logger.info("生成中断时的性能报告...")
+            self.generate_performance_report()
+        except Exception as e:
+            self.logger.error(f"生成性能报告失败: {e}")
+
+        # 清理资源
+        try:
+            self.cleanup()
+        except Exception as e:
+            self.logger.error(f"清理资源失败: {e}")
+
+        # 生成Excel报告
+        try:
+            self.logger.info("开始生成中断时的Excel报告...")
+            report_path = self.generate_excel_report()
+            if report_path:
+                self.logger.info(f"中断状态报告已生成: {report_path}")
+            else:
+                self.logger.error("中断状态报告生成失败")
+        except Exception as e:
+            self.logger.error(f"生成Excel报告失败: {e}")
+            traceback.print_exc()
+
+        # 等待一点时间确保日志写入
+        time.sleep(1)
+
+        print("测试已安全终止，报告已生成")
+
+        # 强制退出
+        sys.exit(0)
+
     def calculate_squared_diffs(self, data_list):
         """计算均值、标准差、最快、最慢"""
         if not data_list:
             return 0, 0, 0, 0
-        
+
         fastest = min(data_list)
         slowest = max(data_list)
         mean_time = sum(data_list) / len(data_list)
         squared_diffs = [(t - mean_time) ** 2 for t in data_list]
-        
+
         if not squared_diffs:
             return 0, 0, 0, 0
-            
+
         variance = sum(squared_diffs) / len(squared_diffs)
         stddev = math.sqrt(variance)
-        
+
         return round(stddev, 2), round(mean_time, 2), round(fastest, 2), round(slowest, 2)
-    
+
     def calculate_sub_spendtime(self):
         """计算订阅耗时统计"""
         sub_stats = []
         receive_stats = []
-        
+
         try:
             for key, value in self.sub_spend_time.items():
                 if value:
@@ -655,7 +809,7 @@ class MQTTLoadTester:
                         f'样本数：{self.config["num_subscribers"]}\t{key}：平均耗时：{average} ms，最快耗时：{fastest} ms，'
                         f'最慢耗时：{slowest} ms，耗时标准差：{stddev}'
                     )
-                    
+
                     # 为Excel报告保存数据
                     sub_stats.append({
                         'topic': key,
@@ -665,7 +819,7 @@ class MQTTLoadTester:
                         'slowest_ms': slowest,
                         'stddev_ms': stddev
                     })
-                    
+
             for key, value in self.receive_msg_spend_time.items():
                 if value:
                     stddev, average, fastest, slowest = self.calculate_squared_diffs(value)
@@ -673,7 +827,7 @@ class MQTTLoadTester:
                         f'消息接收情况：\n样本数：{len(self.receive_msg_count)}\t{key}：平均耗时：{average} ms，'
                         f'最快耗时：{fastest} ms，最慢耗时：{slowest} ms，耗时标准差：{stddev}'
                     )
-                    
+
                     # 为Excel报告保存数据
                     receive_stats.append({
                         'topic': key,
@@ -685,176 +839,312 @@ class MQTTLoadTester:
                     })
         except Exception as e:
             self.logger.error(f"计算订阅耗时统计时出错: {e}")
-            
+
         return sub_stats, receive_stats
-    
+
     def generate_final_report(self):
         """生成最终测试报告"""
         self.logger.info("性能测试结束，生成最终报告...")
-        
+
         # 连接耗时
         stddev, average, fastest, slowest = self.calculate_squared_diffs(self.connect_elapsed_time)
         self.logger.info(
             f"平均连接速度：{average} ms，最快连接时间：{fastest} ms，最慢连接时间：{slowest} ms， 连接标准差：{stddev}"
         )
-        
+
         # 消息丢失计算
         loss_info = self.calculate_message_loss()
-        
+
         # 发送和接收消息统计
         with publish_msg_lock, receive_msg_lock:
-            self.logger.info(f"发送的消息数量：{len(self.publish_msg_count)}，接收到的消息数量：{len(self.receive_msg_count)}")
+            self.logger.info(
+                f"发送的消息数量：{len(self.publish_msg_count)}，接收到的消息数量：{len(self.receive_msg_count)}")
             self.logger.info(f"消息丢失率：{loss_info['loss_rate']:.2f}%，丢失消息数：{loss_info['lost_messages']}")
-        
+
         # 连接可靠性统计
-        self.logger.info(f"连接失败次数：{self.connection_failures}，断开连接次数：{self.disconnections}，重连次数：{self.reconnections}")
-        
+        self.logger.info(
+            f"连接失败次数：{self.connection_failures}，断开连接次数：{self.disconnections}，重连次数：{self.reconnections}")
+
         # QoS统计
-        self.logger.info(f"QoS {self.config['qos_level']} 成功发布：{self.qos_success[self.config['qos_level']]}，失败：{self.qos_failure[self.config['qos_level']]}")
-        
+        self.logger.info(
+            f"QoS {self.config['qos_level']} 成功发布：{self.qos_success[self.config['qos_level']]}，失败：{self.qos_failure[self.config['qos_level']]}")
+
         # 延迟分布
         self.logger.info("消息延迟分布：")
         for bucket, count in self.latency_buckets.items():
             self.logger.info(f"  {bucket}: {count} 条消息")
-        
+
         # 订阅和接收消息耗时
         self.calculate_sub_spendtime()
-        
+
         for item in self.sub_spend_time_list:
             self.logger.info(item)
-            
+
         for item in self.receive_msg_spend_time_list:
             self.logger.info(item)
-        
+
         self.logger.info("性能测试完成！")
-        
+
     def generate_excel_report(self):
-        """生成Excel格式的性能测试报告"""
+        """生成Excel格式的性能报告"""
         try:
             self.logger.info("正在生成Excel格式报告...")
-            
-            # 确保报告目录存在
-            os.makedirs(self.config["excel_report_dir"], exist_ok=True)
-            
-            # 创建报告文件名
-            timestamp = self.test_start_time.strftime("%Y%m%d_%H%M%S")
-            report_filename = os.path.join(self.config["excel_report_dir"], f"mqtt_perf_report_{timestamp}.xlsx")
-            
-            # 创建Excel写入器
-            with pd.ExcelWriter(report_filename, engine='openpyxl') as writer:
-                # 测试配置信息
-                config_df = pd.DataFrame([{
-                    "测试开始时间": self.test_start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "测试结束时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "测试持续时间(秒)": (datetime.now() - self.test_start_time).total_seconds(),
-                    "MQTT代理服务器": f"{self.config['broker']}:{self.config['port']}",
-                    "订阅客户端数量": self.config["num_subscribers"],
-                    "发布客户端数量": self.config["num_publishers"],
-                    "心跳客户端数量": self.config["num_heartbeats"],
-                    "QoS级别": self.config["qos_level"],
-                    "发布间隔(秒)": self.config["publish_interval"],
-                    "心跳间隔(秒)": self.config["heartbeat_interval"],
-                    "连接超时(秒)": self.config["connection_timeout"],
-                    "Keep Alive(秒)": self.config["keep_alive"]
-                }])
-                config_df.to_excel(writer, sheet_name="测试配置", index=False)
+
+            # 确保存在报告目录
+            if not os.path.exists(self.config["excel_report_dir"]):
+                os.makedirs(self.config["excel_report_dir"])
+
+            # 创建时间戳用于文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # 设置报告文件路径
+            report_path = os.path.join(self.config["excel_report_dir"], f"mqtt_perf_report_{timestamp}.xlsx")
+
+            # 计算测试总时长
+            test_duration = 0
+            if self.test_start_time:
+                test_duration = (datetime.now() - self.test_start_time).total_seconds()
+
+            # 活动连接数
+            active_connections = max(0, len(self.connect_elapsed_time) - self.disconnections)
+
+            # 计算订阅者和发布者数量
+            subscribers_count = len(self.subscribers)
+            publishers_count = len(self.publishers)
+            heartbeats_count = len(self.heartbeats)
+
+            self.logger.info(f"订阅者: {subscribers_count}, 发布者: {publishers_count}, 心跳: {heartbeats_count}")
+
+            # 消息统计
+            receive_msg_count = len(self.receive_msg_count)
+            publish_msg_count = len(self.publish_msg_count)
+
+            self.logger.info(f"接收消息统计: 原始计数={receive_msg_count}")
+
+            # 计算消息速率
+            receive_rate = receive_msg_count / test_duration if test_duration > 0 else 0
+            publish_rate = publish_msg_count / test_duration if test_duration > 0 else 0
+
+            # 消息丢失计算
+            loss_data = self.calculate_message_loss()
+
+            # 创建概览数据框
+            overview_data = {
+                "测试指标": [
+                    "测试开始时间",
+                    "测试持续时间",
+                    "发布消息总数",
+                    "接收消息总数",
+                    "消息丢失率",
+                    "发布速率 (消息/秒)",
+                    "接收速率 (消息/秒)",
+                    "活动连接数",
+                    "连接失败次数",
+                    "断开连接次数",
+                    "重连次数",
+                    "QoS 0 成功率",
+                    "QoS 1 成功率",
+                    "QoS 2 成功率"
+                ],
+                "值": [
+                    self.test_start_time.strftime("%Y-%m-%d %H:%M:%S") if self.test_start_time else "未记录",
+                    f"{test_duration:.2f}秒",
+                    publish_msg_count,
+                    receive_msg_count,
+                    f"{loss_data['loss_rate']:.2f}%",
+                    f"{publish_rate:.2f}",
+                    f"{receive_rate:.2f}",
+                    active_connections,
+                    self.connection_failures,
+                    self.disconnections,
+                    self.reconnections,
+                    f"{self.calculate_qos_success_rate(0):.2f}%",
+                    f"{self.calculate_qos_success_rate(1):.2f}%",
+                    f"{self.calculate_qos_success_rate(2):.2f}%"
+                ]
+            }
+
+            overview_df = pd.DataFrame(overview_data)
+
+            # 计算连接性能数据
+            connect_times = []
+            for client_id, start_time in self.connection_times.items():
+                if start_time > 0:  # 有效的开始时间
+                    connect_time = self.connect_elapsed_time[client_id] if client_id in self.connect_elapsed_time else 0
+                    connect_times.append(connect_time)
+
+            # 如果存在连接时间数据
+            if connect_times:
+                # 计算标准差
+                avg_connect_time = sum(connect_times) / len(connect_times)
+                conn_time_variance = sum((x - avg_connect_time) ** 2 for x in connect_times) / len(connect_times) if len(connect_times) > 1 else 0
+                conn_time_std_dev = conn_time_variance ** 0.5
                 
-                # 连接性能
-                connect_stats = pd.DataFrame([{
-                    "连接总数": len(self.connect_elapsed_time),
-                    "平均连接时间(ms)": sum(self.connect_elapsed_time) / len(self.connect_elapsed_time) if self.connect_elapsed_time else 0,
-                    "最快连接(ms)": min(self.connect_elapsed_time) if self.connect_elapsed_time else 0,
-                    "最慢连接(ms)": max(self.connect_elapsed_time) if self.connect_elapsed_time else 0,
-                    "连接时间标准差": round(math.sqrt(sum((x - (sum(self.connect_elapsed_time) / len(self.connect_elapsed_time))) ** 2 
-                                       for x in self.connect_elapsed_time) / len(self.connect_elapsed_time)), 2) 
-                                       if self.connect_elapsed_time else 0,
-                    "连接失败次数": self.connection_failures,
-                    "断开连接次数": self.disconnections,
-                    "重连次数": self.reconnections,
-                    "连接成功率(%)": (1 - (self.connection_failures / (len(self.connect_elapsed_time) + self.connection_failures))) * 100 
-                                  if (len(self.connect_elapsed_time) + self.connection_failures) > 0 else 0
-                }])
-                connect_stats.to_excel(writer, sheet_name="连接性能", index=False)
+                conn_data = pd.DataFrame({
+                    "连接指标": ["最小连接时间", "最大连接时间", "平均连接时间", "连接标准差", "总连接尝试次数", "成功连接次数"],
+                    "值": [
+                        f"{min(connect_times):.2f}秒" if connect_times else "N/A",
+                        f"{max(connect_times):.2f}秒" if connect_times else "N/A",
+                        f"{sum(connect_times) / len(connect_times):.2f}秒" if connect_times else "N/A",
+                        f"{conn_time_std_dev:.2f}秒" if conn_time_std_dev else "N/A",
+                        len(self.connection_times),
+                        len(connect_times)
+                    ]
+                })
+            else:
+                conn_data = pd.DataFrame({
+                    "连接指标": ["最小连接时间", "最大连接时间", "平均连接时间", "总连接尝试次数", "成功连接次数"],
+                    "值": ["N/A", "N/A", "N/A", len(self.connection_times), 0]
+                })
+
+            # 接收消息性能数据
+            receive_times = []
+            for topic, times in self.receive_msg_spend_time.items():
+                receive_times.extend(times)
+
+            if receive_times:
+                receive_data = pd.DataFrame({
+                    "接收指标": ["最小接收延迟", "最大接收延迟", "平均接收延迟", "总接收消息数"],
+                    "值": [
+                        f"{min(receive_times):.2f}毫秒" if receive_times else "N/A",
+                        f"{max(receive_times):.2f}毫秒" if receive_times else "N/A",
+                        f"{sum(receive_times) / len(receive_times):.2f}毫秒" if receive_times else "N/A",
+                        len(self.receive_msg_count)
+                    ]
+                })
+            else:
+                receive_data = pd.DataFrame({
+                    "接收指标": ["最小接收延迟", "最大接收延迟", "平均接收延迟", "总接收消息数"],
+                    "值": ["N/A", "N/A", "N/A", len(self.receive_msg_count)]
+                })
+
+            # 发布消息性能数据
+            publish_data = pd.DataFrame({
+                "发布指标": ["总发布消息数", "发布速率"],
+                "值": [
+                    len(self.publish_msg_count),
+                    f"{publish_rate:.2f}消息/秒"
+                ]
+            })
+
+            # 消息丢失统计数据
+            loss_data_df = pd.DataFrame({
+                "丢失指标": [
+                    "发布消息数",
+                    "接收消息数",
+                    "丢失消息数",
+                    "丢失率",
+                    "发送的唯一ID数",
+                    "接收的唯一ID数",
+                    "根据ID丢失数",
+                    "根据ID丢失率"
+                ],
+                "值": [
+                    loss_data["total_published"],
+                    loss_data["total_received"],
+                    loss_data["lost_messages"],
+                    f"{loss_data['loss_rate']:.2f}%",
+                    loss_data["sent_ids_count"],
+                    loss_data["received_ids_count"],
+                    loss_data["lost_messages_by_id"],
+                    f"{loss_data['loss_rate_by_id']:.2f}%"
+                ]
+            })
+
+            # 延迟分布数据
+            latency_list = []
+            for bucket, count in self.latency_buckets.items():
+                latency_list.append({"延迟范围": bucket, "消息数": count})
+
+            latency_df = pd.DataFrame(latency_list)
+
+            # 系统资源使用数据
+            if self.resource_data:  # 确保资源数据不为空
+                resource_df = pd.DataFrame(self.resource_data)
+                # 确保列名正确设置
+                if len(resource_df.columns) >= 5:  # 确保至少有预期的5列
+                    resource_df.columns = ["时间", "CPU使用率(%)", "内存使用率(%)", "网络发送(KB)", "网络接收(KB)"]
+                    # 转换为字符串避免类型问题
+                    resource_df["CPU使用率(%)"] = resource_df["CPU使用率(%)"].apply(lambda x: f"{float(x):.1f}")
+                    resource_df["内存使用率(%)"] = resource_df["内存使用率(%)"].apply(lambda x: f"{float(x):.1f}")
+                    resource_df["网络发送(KB)"] = resource_df["网络发送(KB)"].apply(lambda x: f"{float(x):.2f}")
+                    resource_df["网络接收(KB)"] = resource_df["网络接收(KB)"].apply(lambda x: f"{float(x):.2f}")
                 
-                # 消息收发统计
-                loss_info = self.calculate_message_loss()
-                message_stats = pd.DataFrame([{
-                    "发送消息总数": len(self.publish_msg_count),
-                    "接收消息总数": len(self.receive_msg_count),
-                    "消息丢失数": loss_info["lost_messages"],
-                    "消息丢失率(%)": loss_info["loss_rate"],
-                    "基于ID丢失数": loss_info["lost_messages_by_id"],
-                    "基于ID丢失率(%)": loss_info["loss_rate_by_id"],
-                    "测试持续时间(秒)": (datetime.now() - self.test_start_time).total_seconds(),
-                    "平均发送速率(条/秒)": len(self.publish_msg_count) / (datetime.now() - self.test_start_time).total_seconds() 
-                                      if (datetime.now() - self.test_start_time).total_seconds() > 0 else 0,
-                    "平均接收速率(条/秒)": len(self.receive_msg_count) / (datetime.now() - self.test_start_time).total_seconds() 
-                                      if (datetime.now() - self.test_start_time).total_seconds() > 0 else 0,
-                    "QoS0成功率(%)": self.calculate_qos_success_rate(0),
-                    "QoS1成功率(%)": self.calculate_qos_success_rate(1),
-                    "QoS2成功率(%)": self.calculate_qos_success_rate(2)
-                }])
-                message_stats.to_excel(writer, sheet_name="消息统计", index=False)
-                
-                # 订阅性能统计
-                sub_stats, receive_stats = self.calculate_sub_spendtime()
-                
-                if sub_stats:
-                    sub_df = pd.DataFrame(sub_stats)
-                    sub_df.to_excel(writer, sheet_name="订阅性能", index=False)
-                
-                if receive_stats:
-                    receive_df = pd.DataFrame(receive_stats)
-                    receive_df.to_excel(writer, sheet_name="消息接收性能", index=False)
-                
-                # 延迟分布统计
-                latency_df = pd.DataFrame([{k: v for k, v in self.latency_buckets.items()}])
-                latency_df.to_excel(writer, sheet_name="延迟分布", index=False)
-                
-                # 连接可靠性详情
-                if hasattr(self, 'connection_events') and self.connection_events:
-                    conn_df = pd.DataFrame(self.connection_events)
-                    conn_df.to_excel(writer, sheet_name="连接事件", index=False)
-                
-                # 性能数据趋势
-                if hasattr(self, 'performance_data') and self.performance_data:
-                    perf_df = pd.DataFrame(self.performance_data)
-                    perf_df.to_excel(writer, sheet_name="性能趋势", index=False)
-                
-                # 错误与异常统计
-                error_stats = pd.DataFrame([{
-                    "协议错误数": self.protocol_errors,
-                    "超时次数": self.timeouts,
-                    "重连失败次数": self.connection_failures,
-                    "消息发布失败数": sum(self.qos_failure.values())
-                }])
-                error_stats.to_excel(writer, sheet_name="错误统计", index=False)
-                
-                # 资源使用情况
-                if self.resource_data:
-                    resource_df = pd.DataFrame(self.resource_data)
-                    resource_df.to_excel(writer, sheet_name="资源使用", index=False)
-            
-            self.logger.info(f"Excel报告已生成: {report_filename}")
-            
+                    # 创建Excel报告
+                    with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                        overview_df.to_excel(writer, sheet_name='测试概述', index=False)
+                        conn_data.to_excel(writer, sheet_name='连接性能', index=False)
+                        receive_data.to_excel(writer, sheet_name='消息接收性能', index=False)
+                        publish_data.to_excel(writer, sheet_name='消息发布性能', index=False)
+                        loss_data_df.to_excel(writer, sheet_name='消息丢失统计', index=False)
+                        latency_df.to_excel(writer, sheet_name='延迟分布', index=False)
+                        resource_df.to_excel(writer, sheet_name='系统资源使用', index=False)  # 确保这一行存在
+                else:
+                    self.logger.warning(f"资源数据列数不足: {len(resource_df.columns)}，跳过资源数据写入")
+                    # 创建Excel报告（不包含资源数据）
+                    with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                        overview_df.to_excel(writer, sheet_name='测试概述', index=False)
+                        conn_data.to_excel(writer, sheet_name='连接性能', index=False)
+                        receive_data.to_excel(writer, sheet_name='消息接收性能', index=False)
+                        publish_data.to_excel(writer, sheet_name='消息发布性能', index=False)
+                        loss_data_df.to_excel(writer, sheet_name='消息丢失统计', index=False)
+                        latency_df.to_excel(writer, sheet_name='延迟分布', index=False)
+            else:
+                self.logger.warning("没有资源使用数据，将跳过资源数据写入")
+                # 创建Excel报告（不包含资源数据）
+                with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                    overview_df.to_excel(writer, sheet_name='测试概述', index=False)
+                    conn_data.to_excel(writer, sheet_name='连接性能', index=False)
+                    receive_data.to_excel(writer, sheet_name='消息接收性能', index=False)
+                    publish_data.to_excel(writer, sheet_name='消息发布性能', index=False)
+                    loss_data_df.to_excel(writer, sheet_name='消息丢失统计', index=False)
+                    latency_df.to_excel(writer, sheet_name='延迟分布', index=False)
+
+            self.logger.info(f"Excel报告已生成: {report_path}")
+            return report_path
+
         except Exception as e:
-            self.logger.error(f"生成Excel报告时发生错误: {e}")
-    
+            self.logger.error(f"生成Excel报告出错: {e}")
+            traceback.print_exc()
+
+            # 备份报告逻辑仍保持
+            try:
+                # 确保timestamp已定义
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                simple_report_path = os.path.join(self.config["excel_report_dir"], f"simple_report_{timestamp}.xlsx")
+
+                simple_data = pd.DataFrame({
+                    "报告项目": ["测试日期", "测试持续时间", "总消息数"],
+                    "值": [
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        f"{(datetime.now() - self.test_start_time).total_seconds():.2f}秒" if self.test_start_time else "N/A",
+                        len(self.publish_msg_count)
+                    ]
+                })
+
+                simple_data.to_excel(simple_report_path, index=False)
+                self.logger.info(f"简化报告已生成: {simple_report_path}")
+                return simple_report_path
+
+            except Exception as e2:
+                self.logger.error(f"生成简化报告也失败: {e2}")
+                return None
+
     def calculate_message_loss(self):
         """计算消息丢失率"""
         total_published = len(self.publish_msg_count)
         total_received = len(self.receive_msg_count)
-        
+
         # 基于消息计数的丢失率
         lost_messages = max(0, total_published - total_received)
         loss_rate = (lost_messages / total_published * 100) if total_published > 0 else 0
-        
+
         # 基于消息ID的丢失率
         sent_ids_count = len(self.message_ids)
         received_ids_count = len(self.received_ids)
         lost_by_id = max(0, sent_ids_count - received_ids_count)
         loss_rate_by_id = (lost_by_id / sent_ids_count * 100) if sent_ids_count > 0 else 0
-        
+
         return {
             "total_published": total_published,
             "total_received": total_received,
@@ -865,32 +1155,31 @@ class MQTTLoadTester:
             "lost_messages_by_id": lost_by_id,
             "loss_rate_by_id": loss_rate_by_id
         }
-    
+
     def calculate_qos_success_rate(self, qos_level):
         """计算指定QoS级别的成功率"""
         total = self.qos_success.get(qos_level, 0) + self.qos_failure.get(qos_level, 0)
         if total == 0:
             return 0
         return (self.qos_success.get(qos_level, 0) / total) * 100
-    
+
     def track_message(self, message_id, is_sent=True):
         """跟踪消息发送和接收状态"""
-        if is_sent:
-            with publish_msg_lock:
-                self.message_ids[message_id] = {
-                    "send_time": time.time(),
-                    "received": False
-                }
-        else:
-            with receive_msg_lock:
-                if message_id in self.message_ids:
-                    self.message_ids[message_id]["received"] = True
-                    self.message_ids[message_id]["receive_time"] = time.time()
-                    latency = (self.message_ids[message_id]["receive_time"] - self.message_ids[message_id]["send_time"]) * 1000
-                    self.update_latency_bucket(latency)
-                self.received_ids.add(message_id)
+        try:
+            with message_tracking_lock:
+                if is_sent:
+                    # 记录发送的消息ID和发送时间
+                    self.message_ids[message_id] = ("sent", time.time())
+                else:
+                    # 记录接收到的消息ID
+                    self.received_ids.add(message_id)
+                    # 更新消息状态为已接收
+                    if message_id in self.message_ids:
+                        self.message_ids[message_id] = ("received", time.time())
+        except Exception as e:
+            self.logger.error(f"跟踪消息时出错: {e}")
 
-    def on_log(self, client, userdata, level, buf):
+    def on_log(self, client, userdata, level, buf, properties=None):
         """记录MQTT客户端库的日志"""
         if level == mqtt.MQTT_LOG_ERR:
             self.logger.error(f"MQTT错误 ({userdata['client_id']}): {buf}")
@@ -900,17 +1189,584 @@ class MQTTLoadTester:
         # elif level == mqtt.MQTT_LOG_DEBUG:
         #     self.logger.debug(f"MQTT调试 ({userdata['client_id']}): {buf}")
 
+    def generate_performance_report(self):
+        """生成性能报告"""
+        try:
+            # 计算测试持续时间
+            test_duration = time.time() - self.test_start_time
+            
+            # 计算实际的发布开始和结束时间
+            publish_start_time = min(self.publish_msg_time.values()) if self.publish_msg_time else self.test_start_time
+            publish_end_time = max(self.publish_msg_time.values()) if self.publish_msg_time else time.time()
+            publish_duration = publish_end_time - publish_start_time if publish_start_time < publish_end_time else test_duration
+            
+            # 计算实际的接收开始和结束时间
+            receive_start_time = min(self.receive_msg_time.values()) if self.receive_msg_time else self.test_start_time
+            receive_end_time = max(self.receive_msg_time.values()) if self.receive_msg_time else time.time()
+            receive_duration = receive_end_time - receive_start_time if receive_start_time < receive_end_time else test_duration
+            
+            # 使用对应的时间段计算实际速率
+            publish_count = len(self.publish_msg_count)
+            receive_count = len(self.receive_msg_count)
+            
+            publish_rate = publish_count / publish_duration if publish_duration > 0 else 0
+            receive_rate = receive_count / receive_duration if receive_duration > 0 else 0
+            
+            # 计算连接时间的统计信息
+            conn_time_std_dev = 0
+            conn_time_variance = 0
+            if self.connect_elapsed_time:
+                if len(self.connect_elapsed_time) > 1:
+                    conn_time_variance = sum((x - self.avg_connect_time) ** 2 for x in self.connect_elapsed_time) / len(self.connect_elapsed_time)
+                    conn_time_std_dev = conn_time_variance ** 0.5
+            
+            # 计算主题性能的统计信息
+            topic_stats = {}
+            for topic, latencies in self.receive_msg_spend_time.items():
+                if latencies:
+                    avg_latency = sum(latencies) / len(latencies)
+                    min_latency = min(latencies)
+                    max_latency = max(latencies)
+                    
+                    # 计算方差和标准差
+                    variance = sum((x - avg_latency) ** 2 for x in latencies) / len(latencies) if len(latencies) > 1 else 0
+                    std_dev = variance ** 0.5
+                    
+                    topic_stats[topic] = {
+                        "消息数": len(latencies),
+                        "平均延迟(ms)": round(avg_latency, 2),
+                        "最小延迟(ms)": round(min_latency, 2),
+                        "最大延迟(ms)": round(max_latency, 2),
+                        "方差": round(variance, 2),
+                        "标准差": round(std_dev, 2)
+                    }
+            
+            # 计算消息丢失率
+            message_loss_rate = 0
+            if publish_count > 0:
+                message_loss_rate = ((publish_count - receive_count) / publish_count) * 100
+            
+            # 生成报告
+            report = {
+                "测试开始时间": datetime.fromtimestamp(self.test_start_time).strftime('%Y-%m-%d %H:%M:%S'),
+                "测试持续时间(秒)": round(test_duration, 2),
+                "发布消息总数": publish_count,
+                "接收消息总数": receive_count,
+                "消息丢失率": f"{message_loss_rate:.2f}%",
+                "发布速率 (消息/秒)": round(publish_rate, 2),
+                "接收速率 (消息/秒)": round(receive_rate, 2),
+                "连接总数": len(self.connect_elapsed_time),
+                "连接失败次数": self.connection_failures,
+                "断开连接次数": self.disconnections,
+                "QoS 0 成功率": f"{(self.qos_success.get(0, 0) / (self.qos_success.get(0, 0) + self.qos_failure.get(0, 0)) * 100) if (self.qos_success.get(0, 0) + self.qos_failure.get(0, 0)) > 0 else 0:.2f}%",
+                "QoS 1 成功率": f"{(self.qos_success.get(1, 0) / (self.qos_success.get(1, 0) + self.qos_failure.get(1, 0)) * 100) if (self.qos_success.get(1, 0) + self.qos_failure.get(1, 0)) > 0 else 0:.2f}%",
+                "QoS 2 成功率": f"{(self.qos_success.get(2, 0) / (self.qos_success.get(2, 0) + self.qos_failure.get(2, 0)) * 100) if (self.qos_success.get(2, 0) + self.qos_failure.get(2, 0)) > 0 else 0:.2f}%",
+                "平均连接时间(毫秒)": round(self.avg_connect_time, 2) if self.avg_connect_time else 0,
+                "连接时间方差": round(conn_time_variance, 2),
+                "连接时间标准差": round(conn_time_std_dev, 2),
+                "最小连接时间(毫秒)": round(self.min_connect_time, 2) if self.min_connect_time < float('inf') else 0,
+                "最大连接时间(毫秒)": round(self.max_connect_time, 2) if self.max_connect_time > 0 else 0
+            }
+            
+            # 打印主要性能指标
+            print("\n============ MQTT性能测试报告 ============")
+            for key, value in report.items():
+                print(f"{key:<20} {value}")
+            
+            # 打印主题性能统计
+            if topic_stats:
+                print("\n============ 主题性能统计 ============")
+                for topic, stats in topic_stats.items():
+                    print(f"\n主题: {topic}")
+                    for metric, value in stats.items():
+                        print(f"{metric:<20} {value}")
+            
+            # 打印延迟分布
+            print("\n============ 延迟分布 ============")
+            total_messages = sum(self.latency_buckets.values())
+            for bucket, count in self.latency_buckets.items():
+                percentage = (count / total_messages) * 100 if total_messages > 0 else 0
+                print(f"{bucket:<15} {count:<8} ({percentage:.2f}%)")
+            
+            return report
+            
+        except Exception as e:
+            self.logger.error(f"生成性能报告时出错: {e}")
+            traceback.print_exc()
+            return {}
+
+    def generate_report(self):
+        """生成测试报告"""
+        try:
+            # 计算测试时长
+            if self.test_start_time:
+                test_duration = (datetime.now() - self.test_start_time).total_seconds()
+            else:
+                test_duration = 0
+            
+            # 准备报告数据
+            report_data = {
+                "测试指标": ["值"],
+                "测试开始时间": [self.test_start_time.strftime('%Y-%m-%d %H:%M:%S') if self.test_start_time else 'N/A'],
+                "测试持续时间": [f"{test_duration:.2f}秒"],
+                "发布消息总数": [len(self.publish_msg_count)],
+                "接收消息总数": [len(self.receive_msg_count)],
+                "消息丢失率": [f"{(1 - len(self.receive_msg_count) / max(1, len(self.publish_msg_count))) * 100:.2f}%"],
+                "发布速率 (消息/秒)": [f"{len(self.publish_msg_count) / max(1, test_duration):.2f}"],
+                "接收速率 (消息/秒)": [f"{len(self.receive_msg_count) / max(1, test_duration):.2f}"],
+                "活动连接数": [len(self.connect_elapsed_time)],
+                "连接失败次数": [self.connection_failures],
+                "断开连接次数": [self.disconnections],
+                "重连次数": [self.reconnections]
+            }
+            
+            # 添加QoS成功率
+            for qos in sorted(self.qos_success.keys()):
+                total = self.qos_success[qos] + self.qos_failure[qos]
+                if total > 0:
+                    success_rate = (self.qos_success[qos] / total) * 100
+                else:
+                    success_rate = 0
+                report_data[f"QoS {qos} 成功率"] = [f"{success_rate:.2f}%"]
+            
+            # 打印报告
+            print("\n=========== MQTT性能测试报告 ===========")
+            for key, value in report_data.items():
+                print(f"{key}: {value[0]}")
+            
+            # 打印连接指标
+            print("\n=========== 连接指标 ===========")
+            print(f"最小连接时间: {self.min_connect_time:.2f}毫秒")
+            print(f"最大连接时间: {self.max_connect_time:.2f}毫秒")
+            print(f"平均连接时间: {self.avg_connect_time:.2f}毫秒")
+            print(f"总连接数: {len(self.connect_elapsed_time)}")
+            print(f"成功连接率: {(len(self.connect_elapsed_time) - self.connection_failures) / max(1, len(self.connect_elapsed_time)) * 100:.2f}%")
+            
+            # 打印延迟分布
+            print("\n=========== 延迟分布 ===========")
+            total_messages = sum(self.latency_buckets.values())
+            for bucket, count in self.latency_buckets.items():
+                percentage = (count / total_messages) * 100 if total_messages > 0 else 0
+                print(f"{bucket}: {count} ({percentage:.2f}%)")
+            
+            # 返回报告数据
+            return report_data
+            
+        except Exception as e:
+            self.logger.error(f"生成报告时出错: {e}")
+            traceback.print_exc()
+            return {}
+
+    def run_test(self):
+        """运行测试"""
+        try:
+            # 测试开始时间
+            self.test_start_time = datetime.now()
+            self.logger.info(f"测试开始时间: {self.test_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # 重置测试状态和指标
+            self.running = True
+            self.test_ended = False
+            self.subscribers = []
+            self.publishers = []
+            self.heartbeats = []
+            
+            # 重置消息计数器
+            self.receive_msg_count = []
+            self.publish_msg_count = []
+            self.publish_msg_time = {}
+            self.receive_msg_time = {}
+            
+            # 创建并启动资源监控线程
+            monitor_thread = threading.Thread(target=self.monitor_resources)
+            monitor_thread.daemon = True
+            monitor_thread.start()
+            
+            # 创建订阅者
+            self.logger.info(f"创建 {self.config['num_subscribers']} 个订阅者...")
+            for i in range(self.config['num_subscribers']):
+                client_id = f"conn_subscriber_{i}"
+                client = self.create_mqtt_client(client_id, subscribe=True)
+                if client:
+                    self.subscribers.append(client)
+                    self.logger.info(f"订阅者 {client_id} 已创建并订阅主题")
+                    
+            # 等待订阅者完成连接和订阅
+            print("等待订阅者连接和订阅完成...")
+            time.sleep(2)
+            
+            # 创建并启动发布者线程
+            print(f"创建 {self.config['num_publishers']} 个发布者...")
+            publish_threads = []
+            
+            for i in range(self.config['num_publishers']):
+                client_id = f"conn_publisher_{i}"
+                client = self.create_mqtt_client(client_id)
+                
+                if client:
+                    self.publishers.append(client)
+                    
+                    # 确定发布主题 - 确保主题存在
+                    if i < len(self.config["pub_topics"]):
+                        pub_topic = self.config["pub_topics"][i]
+                    else:
+                        pub_topic = self.config["pub_topics"][0]  # 默认使用第一个主题
+                    
+                    thread = threading.Thread(
+                        target=self.publish_messages,
+                        args=(client, pub_topic, self.config.get("publish_interval", 1.0))
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    publish_threads.append(thread)
+                    
+                    self.logger.info(f"发布者 {client_id} 已创建并开始发布消息到 {pub_topic}")
+            
+            # 等待测试完成
+            test_duration = self.config.get("test_duration", 60)
+            print(f"测试将运行 {test_duration} 秒...")
+            
+            start_time = time.time()
+            while time.time() - start_time < test_duration and self.running:
+                # 每5秒打印一次状态
+                if int(time.time() - start_time) % 5 == 0:
+                    with connection_stats_lock:
+                        with publish_msg_lock:
+                            with receive_msg_lock:
+                                print(f"\n===== 测试状态 ({int(time.time() - start_time)}秒) =====")
+                                print(f"活动连接: {len(self.connect_elapsed_time)}")
+                                print(f"已发布消息: {len(self.publish_msg_count)}")
+                                print(f"已接收消息: {len(self.receive_msg_count)}")
+                                print("================================\n")
+                time.sleep(1)
+            
+            # 测试完成
+            self.running = False
+            self.test_ended = True
+            
+            # 等待线程完成
+            for thread in publish_threads:
+                thread.join(timeout=2)
+            
+            # 断开连接
+            self.disconnect_all_clients()
+            
+            # 生成报告
+            report_data = self.generate_report()
+            excel_path = self.save_excel_report()
+            
+            return report_data
+            
+        except Exception as e:
+            self.logger.error(f"运行测试时出错: {e}")
+            traceback.print_exc()
+            self.running = False
+            self.test_ended = True
+            return {}
+
+    def print_progress(self):
+        """打印当前测试进度"""
+        try:
+            pub_count = len(self.publish_msg_count)
+            rec_count = len(self.receive_msg_count)
+            
+            # 计算测试时长
+            if self.test_start_time:
+                elapsed = (datetime.now() - self.test_start_time).total_seconds()
+            else:
+                elapsed = 0
+            
+            # 计算消息速率
+            pub_rate = pub_count / max(1, elapsed)
+            rec_rate = rec_count / max(1, elapsed)
+            
+            # 计算消息丢失率
+            loss_rate = (1 - rec_count / max(1, pub_count)) * 100 if pub_count > 0 else 0
+            
+            print(f"\n===== 测试进度 ({elapsed:.1f}秒) =====")
+            print(f"发布消息: {pub_count} ({pub_rate:.2f}/秒)")
+            print(f"接收消息: {rec_count} ({rec_rate:.2f}/秒)")
+            print(f"消息丢失率: {loss_rate:.2f}%")
+            
+            # 打印连接统计
+            print(f"活动连接: {len(self.connect_elapsed_time)}")
+            print(f"连接失败: {self.connection_failures}")
+            print(f"断开连接: {self.disconnections}")
+            print("============================\n")
+            
+        except Exception as e:
+            self.logger.error(f"打印进度时出错: {e}")
+
+    def disconnect_all_clients(self):
+        """断开所有客户端连接"""
+        try:
+            # 断开所有订阅者
+            for client in self.subscribers:
+                try:
+                    client.disconnect()
+                    client.loop_stop()
+                except:
+                    pass
+            
+            # 断开所有发布者客户端
+            for client in self.publishers:
+                try:
+                    client.disconnect()
+                    client.loop_stop()
+                except:
+                    pass
+            
+            # 断开所有心跳客户端
+            for client in self.heartbeats:
+                try:
+                    client.disconnect()
+                    client.loop_stop()
+                except:
+                    pass
+                
+            self.logger.info("所有客户端已断开连接")
+            
+        except Exception as e:
+            self.logger.error(f"断开客户端连接时出错: {e}")
+
+    def save_excel_report(self):
+        """将测试报告保存为Excel文件"""
+        try:
+            # 计算测试时长
+            if self.test_start_time:
+                test_duration = (datetime.now() - self.test_start_time).total_seconds()
+            else:
+                test_duration = 0
+            
+            # 确保报告目录存在
+            report_dir = self.config.get("excel_report_dir", "reports")
+            if not os.path.exists(report_dir):
+                os.makedirs(report_dir)
+            
+            # 生成报告文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_path = os.path.join(report_dir, f"mqtt_perf_report_{timestamp}.xlsx")
+            
+            # 创建Excel写入器，使用ExcelWriter
+            with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
+                # 1. 测试概况
+                summary_data = {
+                    "测试指标": [
+                        "测试开始时间",
+                        "测试持续时间",
+                        "发布消息总数",
+                        "接收消息总数",
+                        "消息丢失率",
+                        "发布速率 (消息/秒)",
+                        "接收速率 (消息/秒)",
+                        "活动连接数",
+                        "连接失败次数",
+                        "断开连接次数",
+                        "重连次数"
+                    ],
+                    "值": [
+                        self.test_start_time.strftime('%Y-%m-%d %H:%M:%S') if self.test_start_time else 'N/A',
+                        f"{test_duration:.2f}秒",
+                        len(self.publish_msg_count),
+                        len(self.receive_msg_count),
+                        f"{(1 - len(self.receive_msg_count) / max(1, len(self.publish_msg_count))) * 100:.2f}%",
+                        f"{len(self.publish_msg_count) / max(1, test_duration):.2f}",
+                        f"{len(self.receive_msg_count) / max(1, test_duration):.2f}",
+                        len(self.connect_elapsed_time),
+                        self.connection_failures,
+                        self.disconnections,
+                        self.reconnections
+                    ]
+                }
+                
+                # 添加QoS数据
+                for qos in sorted(self.qos_success.keys()):
+                    total = self.qos_success[qos] + self.qos_failure[qos]
+                    if total > 0:
+                        success_rate = (self.qos_success[qos] / total) * 100
+                    else:
+                        success_rate = 0
+                    summary_data["测试指标"].append(f"QoS {qos} 成功率")
+                    summary_data["值"].append(f"{success_rate:.2f}%")
+                
+                # 创建DataFrame并写入Excel
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='测试概况', index=False)
+                
+                # 2. 连接性能指标
+                connection_data = {
+                    "连接指标": [
+                        "最小连接时间(毫秒)",
+                        "最大连接时间(毫秒)",
+                        "平均连接时间(毫秒)",
+                        "总连接数",
+                        "成功连接率"
+                    ],
+                    "值": [
+                        f"{self.min_connect_time:.2f}",
+                        f"{self.max_connect_time:.2f}",
+                        f"{self.avg_connect_time:.2f}",
+                        len(self.connect_elapsed_time),
+                        f"{(len(self.connect_elapsed_time) - self.connection_failures) / max(1, len(self.connect_elapsed_time)) * 100:.2f}%"
+                    ]
+                }
+                connection_df = pd.DataFrame(connection_data)
+                connection_df.to_excel(writer, sheet_name='连接性能', index=False)
+                
+                # 3. 延迟分布
+                latency_data = {
+                    "延迟区间": list(self.latency_buckets.keys()),
+                    "消息数量": list(self.latency_buckets.values())
+                }
+                
+                # 计算百分比
+                total_messages = sum(self.latency_buckets.values())
+                latency_data["百分比"] = [
+                    f"{(count / total_messages) * 100:.2f}%" if total_messages > 0 else "0.00%" 
+                    for count in self.latency_buckets.values()
+                ]
+                
+                latency_df = pd.DataFrame(latency_data)
+                latency_df.to_excel(writer, sheet_name='延迟分布', index=False)
+                
+                # 4. 主题性能统计（如果有）
+                if self.receive_msg_spend_time:
+                    topic_data = {
+                        "主题": [],
+                        "接收消息数": [],
+                        "平均延迟(毫秒)": [],
+                        "最小延迟(毫秒)": [],
+                        "最大延迟(毫秒)": []
+                    }
+                    
+                    for topic, latencies in self.receive_msg_spend_time.items():
+                        if latencies:
+                            topic_data["主题"].append(topic)
+                            topic_data["接收消息数"].append(len(latencies))
+                            topic_data["平均延迟(毫秒)"].append(f"{sum(latencies) / len(latencies):.2f}")
+                            topic_data["最小延迟(毫秒)"].append(f"{min(latencies):.2f}")
+                            topic_data["最大延迟(毫秒)"].append(f"{max(latencies):.2f}")
+                    
+                    if topic_data["主题"]:
+                        topic_df = pd.DataFrame(topic_data)
+                        topic_df.to_excel(writer, sheet_name='主题性能', index=False)
+            
+            self.logger.info(f"Excel报告已保存至: {report_path}")
+            print(f"\n报告已保存至: {report_path}")
+            
+            return report_path
+            
+        except Exception as e:
+            self.logger.error(f"生成Excel报告时出错: {e}")
+            traceback.print_exc()
+            return None
+
+    def print_performance_summary(self):
+        """打印性能摘要"""
+        try:
+            # 计算测试持续时间
+            test_duration = time.time() - self.start_time
+            
+            # 计算连接时间的统计信息
+            conn_time_std_dev = 0
+            conn_time_variance = 0
+            if self.connect_elapsed_time:
+                if len(self.connect_elapsed_time) > 1:
+                    conn_time_variance = sum((x - self.avg_connect_time) ** 2 for x in self.connect_elapsed_time) / len(self.connect_elapsed_time)
+                    conn_time_std_dev = conn_time_variance ** 0.5
+            
+            # 打印摘要表格
+            print("\n")
+            print("=" * 60)
+            print("MQTT性能测试摘要")
+            print("=" * 60)
+            
+            # 基本信息表格
+            print(f"{'测试开始时间':<20} {datetime.fromtimestamp(self.start_time).strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"{'测试持续时间':<20} {test_duration:.2f}秒")
+            print(f"{'发布消息总数':<20} {len(self.publish_msg_count)}")
+            print(f"{'接收消息总数':<20} {len(self.receive_msg_count)}")
+            
+            # 计算消息丢失率
+            loss_rate = ((len(self.publish_msg_count) - len(self.receive_msg_count)) / len(self.publish_msg_count) * 100) if len(self.publish_msg_count) > 0 else 0
+            print(f"{'消息丢失率':<20} {loss_rate:.2f}%")
+            
+            # 计算消息速率
+            publish_rate = len(self.publish_msg_count) / test_duration if test_duration > 0 else 0
+            receive_rate = len(self.receive_msg_count) / test_duration if test_duration > 0 else 0
+            print(f"{'发布速率':<20} {publish_rate:.2f} 消息/秒")
+            print(f"{'接收速率':<20} {receive_rate:.2f} 消息/秒")
+            
+            # 连接统计
+            print("\n" + "-" * 40)
+            print("连接指标                值")
+            print("-" * 40)
+            print(f"{'最小连接时间(毫秒)':<20} {self.min_connect_time:.2f}")
+            print(f"{'最大连接时间(毫秒)':<20} {self.max_connect_time:.2f}")
+            print(f"{'平均连接时间(毫秒)':<20} {self.avg_connect_time:.2f}")
+            print(f"{'连接时间方差':<20} {conn_time_variance:.2f}")
+            print(f"{'连接时间标准差':<20} {conn_time_std_dev:.2f}")
+            print(f"{'总连接数':<20} {len(self.connect_elapsed_time)}")
+            
+            conn_success_rate = (len(self.connect_elapsed_time) / (len(self.connect_elapsed_time) + self.connection_failures) * 100) if (len(self.connect_elapsed_time) + self.connection_failures) > 0 else 0
+            print(f"{'连接成功率':<20} {conn_success_rate:.2f}%")
+            
+            # QoS统计
+            print("\n" + "-" * 40)
+            print("QoS指标                值")
+            print("-" * 40)
+            
+            for qos in range(3):
+                success = self.qos_success.get(qos, 0)
+                failure = self.qos_failure.get(qos, 0)
+                total = success + failure
+                rate = (success / total * 100) if total > 0 else 0
+                print(f"{'QoS ' + str(qos) + ' 成功率':<20} {rate:.2f}%")
+            
+            # 主题性能统计
+            if self.receive_msg_spend_time:
+                print("\n" + "-" * 60)
+                print("主题性能统计")
+                print("-" * 60)
+                
+                for topic, latencies in self.receive_msg_spend_time.items():
+                    if latencies:
+                        avg_latency = sum(latencies) / len(latencies)
+                        min_latency = min(latencies)
+                        max_latency = max(latencies)
+                        
+                        # 计算方差和标准差
+                        variance = sum((x - avg_latency) ** 2 for x in latencies) / len(latencies) if len(latencies) > 1 else 0
+                        std_dev = variance ** 0.5
+                        
+                        print(f"\n主题: {topic}")
+                        print(f"{'消息数':<20} {len(latencies)}")
+                        print(f"{'平均延迟(ms)':<20} {avg_latency:.2f}")
+                        print(f"{'最小延迟(ms)':<20} {min_latency:.2f}")
+                        print(f"{'最大延迟(ms)':<20} {max_latency:.2f}")
+                        print(f"{'延迟方差':<20} {variance:.2f}")
+                        print(f"{'延迟标准差':<20} {std_dev:.2f}")
+            
+            print("=" * 60)
+            
+        except Exception as e:
+            self.logger.error(f"打印性能摘要时出错: {e}")
+            traceback.print_exc()
+
+
 def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='MQTT性能测试工具')
     parser.add_argument('-c', '--config', help='配置文件路径')
     return parser.parse_args()
 
+
 def main():
     """主函数"""
     args = parse_arguments()
     tester = MQTTLoadTester(args.config)
-    tester.start_mqtt_clients()
+    tester.run_test()
+
 
 if __name__ == "__main__":
     main()
