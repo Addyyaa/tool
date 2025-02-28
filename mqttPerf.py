@@ -57,6 +57,7 @@ class MQTTLoadTester:
         self.min_connect_time = float('inf')  # 最小连接时间，初始化为无穷大
         self.max_connect_time = 0       # 最大连接时间
         self.avg_connect_time = 0       # 平均连接时间
+        self.conn_time_std_dev = 0  # 添加标准差属性初始化
         self.connection_failures = 0    # 连接失败次数
         self.disconnections = 0         # 断开连接次数
         self.reconnections = 0          # 重连次数
@@ -86,6 +87,17 @@ class MQTTLoadTester:
         
         # 初始化colorama
         init(autoreset=True)
+        
+        # 消息跟踪相关
+        self.message_ids = {}
+        self.received_ids = set()
+        
+        # 添加订阅耗时相关属性
+        self.sub_spend_time_list = []
+        self.receive_msg_spend_time_list = []
+        
+        # 添加资源监控相关属性
+        self.resource_data = []
 
     def setup_default_logging(self):
         """设置默认日志系统"""
@@ -322,26 +334,24 @@ class MQTTLoadTester:
         except Exception as e:
             self.logger.error(f"处理连接事件时出错: {e}")
 
-    def on_disconnect(self, client, userdata, rc):
+    def on_disconnect(self, client, userdata, reason_code, properties=None):
         """处理断开连接事件 (MQTTv5版本)"""
-        try:
-            client_id = userdata.get('client_id', 'unknown')
-            
-            # 只有在测试运行期间且不是预期的断开才计数
-            if self.running and not self.test_ended:
+        client_id = userdata.get("client_id", "未知客户端")
+        self.logger.info(f"客户端 {client_id} 断开连接，原因码: {reason_code}")
+        
+        with connection_stats_lock:
+            self.disconnections += 1
+        
+        # 如果不是正常断开且测试仍在运行，尝试重连
+        if reason_code != 0 and self.running:
+            self.logger.warning(f"客户端 {client_id} 意外断开，尝试重连...")
+            try:
+                client.reconnect()
                 with connection_stats_lock:
-                    self.disconnections += 1
-                    
-                if rc == 0:
-                    self.logger.info(f"客户端 {client_id} 正常断开连接")
-                else:
-                    self.logger.warning(f"客户端 {client_id} 意外断开连接，返回码: {rc}")
-                    print(f"警告: 客户端 {client_id} 意外断开连接，返回码: {rc}")
-            else:
-                # 测试已结束或未开始，这是预期的断开
-                self.logger.info(f"客户端 {client_id} 在测试{'结束后' if self.test_ended else '开始前'}断开连接")
-        except Exception as e:
-            self.logger.error(f"处理断开连接事件时出错: {e}")
+                    self.reconnections += 1
+                self.logger.info(f"客户端 {client_id} 重连成功")
+            except Exception as e:
+                self.logger.error(f"客户端 {client_id} 重连失败: {e}")
 
     def on_message(self, client, userdata, msg):
         """处理接收到的消息 (MQTTv5版本)"""
@@ -779,77 +789,92 @@ class MQTTLoadTester:
         sys.exit(0)
 
     def calculate_squared_diffs(self, data_list):
-        """计算均值、标准差、最快、最慢"""
+        """计算标准差和其他统计数据"""
         if not data_list:
             return 0, 0, 0, 0
-
-        fastest = min(data_list)
-        slowest = max(data_list)
-        mean_time = sum(data_list) / len(data_list)
-        squared_diffs = [(t - mean_time) ** 2 for t in data_list]
-
-        if not squared_diffs:
-            return 0, 0, 0, 0
-
-        variance = sum(squared_diffs) / len(squared_diffs)
-        stddev = math.sqrt(variance)
-
-        return round(stddev, 2), round(mean_time, 2), round(fastest, 2), round(slowest, 2)
+        
+        # 计算平均值
+        mean = sum(data_list) / len(data_list)
+        
+        # 计算方差
+        if len(data_list) > 1:
+            variance = sum((x - mean) ** 2 for x in data_list) / len(data_list)
+            std_dev = variance ** 0.5
+        else:
+            variance = 0
+            std_dev = 0
+        
+        # 查找最小值和最大值
+        min_val = min(data_list) if data_list else 0
+        max_val = max(data_list) if data_list else 0
+        
+        return std_dev, mean, min_val, max_val
 
     def calculate_sub_spendtime(self):
-        """计算订阅耗时统计"""
-        sub_stats = []
-        receive_stats = []
-
+        """计算订阅和接收消息的耗时统计"""
         try:
+            # 确保列表存在
+            if not hasattr(self, 'sub_spend_time_list'):
+                self.sub_spend_time_list = []
+            if not hasattr(self, 'receive_msg_spend_time_list'):
+                self.receive_msg_spend_time_list = []
+                
+            # 初始化返回值数据
+            sub_stats = []
+            receive_stats = []
+            
+            # 处理订阅耗时
             for key, value in self.sub_spend_time.items():
-                if value:
-                    stddev, average, fastest, slowest = self.calculate_squared_diffs(value)
-                    self.sub_spend_time_list.append(
-                        f'样本数：{self.config["num_subscribers"]}\t{key}：平均耗时：{average} ms，最快耗时：{fastest} ms，'
-                        f'最慢耗时：{slowest} ms，耗时标准差：{stddev}'
-                    )
-
-                    # 为Excel报告保存数据
+                if len(value) > 0:
+                    sdt_dev, average, fastest, slowest = self.calculate_squared_diffs(value)
+                    info_str = (f'样本数：{len(self.subscribers)}\t{key}：平均耗时：{average} ms，最快耗时：{fastest} ms，'
+                               f'最慢耗时：{slowest} ms，耗时标准差：{sdt_dev}')
+                    self.sub_spend_time_list.append(info_str)
+                    
+                    # 添加到统计数据
                     sub_stats.append({
-                        'topic': key,
-                        'sample_count': self.config["num_subscribers"],
-                        'avg_time_ms': average,
-                        'fastest_ms': fastest,
-                        'slowest_ms': slowest,
-                        'stddev_ms': stddev
+                        "主题": key,
+                        "样本数": len(self.subscribers),
+                        "平均耗时(ms)": average,
+                        "最快耗时(ms)": fastest,
+                        "最慢耗时(ms)": slowest,
+                        "标准差": sdt_dev
                     })
-
+            
+            # 处理接收消息耗时
             for key, value in self.receive_msg_spend_time.items():
-                if value:
-                    stddev, average, fastest, slowest = self.calculate_squared_diffs(value)
-                    self.receive_msg_spend_time_list.append(
-                        f'消息接收情况：\n样本数：{len(self.receive_msg_count)}\t{key}：平均耗时：{average} ms，'
-                        f'最快耗时：{fastest} ms，最慢耗时：{slowest} ms，耗时标准差：{stddev}'
-                    )
-
-                    # 为Excel报告保存数据
+                if len(value) > 0:
+                    sdt_dev, average, fastest, slowest = self.calculate_squared_diffs(value)
+                    info_str = (f'消息接收情况：\n样本数：{len(self.receive_msg_count)}\t{key}：平均耗时：{average} ms，'
+                               f'最快耗时：{fastest} ms，最慢耗时：{slowest} ms，耗时标准差：{sdt_dev}')
+                    self.receive_msg_spend_time_list.append(info_str)
+                    
+                    # 添加到统计数据
                     receive_stats.append({
-                        'topic': key,
-                        'sample_count': len(self.receive_msg_count),
-                        'avg_time_ms': average,
-                        'fastest_ms': fastest,
-                        'slowest_ms': slowest,
-                        'stddev_ms': stddev
+                        "主题": key,
+                        "样本数": len(self.receive_msg_count),
+                        "平均耗时(ms)": average,
+                        "最快耗时(ms)": fastest,
+                        "最慢耗时(ms)": slowest,
+                        "标准差": sdt_dev
                     })
+            
+            return sub_stats, receive_stats
+            
         except Exception as e:
             self.logger.error(f"计算订阅耗时统计时出错: {e}")
-
-        return sub_stats, receive_stats
+            # 发生错误时返回空列表
+            return [], []
 
     def generate_final_report(self):
         """生成最终测试报告"""
         self.logger.info("性能测试结束，生成最终报告...")
 
         # 连接耗时
-        stddev, average, fastest, slowest = self.calculate_squared_diffs(self.connect_elapsed_time)
+        self.conn_time_std_dev, self.avg_connect_time, self.min_connect_time, self.max_connect_time = self.calculate_squared_diffs(self.connect_elapsed_time)
+        
         self.logger.info(
-            f"平均连接速度：{average} ms，最快连接时间：{fastest} ms，最慢连接时间：{slowest} ms， 连接标准差：{stddev}"
+            f"平均连接速度：{self.avg_connect_time} ms，最快连接时间：{self.min_connect_time} ms，最慢连接时间：{self.max_connect_time} ms， 连接标准差：{self.conn_time_std_dev}"
         )
 
         # 消息丢失计算
@@ -875,7 +900,11 @@ class MQTTLoadTester:
             self.logger.info(f"  {bucket}: {count} 条消息")
 
         # 订阅和接收消息耗时
-        self.calculate_sub_spendtime()
+        sub_stats, receive_stats = self.calculate_sub_spendtime()
+        
+        # 保存统计数据供Excel报告使用
+        self.sub_performance_stats = sub_stats
+        self.receive_performance_stats = receive_stats
 
         for item in self.sub_spend_time_list:
             self.logger.info(item)
@@ -1059,7 +1088,7 @@ class MQTTLoadTester:
             latency_df = pd.DataFrame(latency_list)
 
             # 系统资源使用数据
-            if self.resource_data:  # 确保资源数据不为空
+            if hasattr(self, 'resource_data') and self.resource_data:  # 先检查属性是否存在，再检查是否为空
                 resource_df = pd.DataFrame(self.resource_data)
                 # 确保列名正确设置
                 if len(resource_df.columns) >= 5:  # 确保至少有预期的5列
@@ -1079,16 +1108,17 @@ class MQTTLoadTester:
                         loss_data_df.to_excel(writer, sheet_name='消息丢失统计', index=False)
                         latency_df.to_excel(writer, sheet_name='延迟分布', index=False)
                         resource_df.to_excel(writer, sheet_name='系统资源使用', index=False)  # 确保这一行存在
+                
+                # 添加主题订阅和接收性能工作表（如果这些属性存在）
+                if hasattr(self, 'sub_performance_stats') and self.sub_performance_stats:
+                    sub_df = pd.DataFrame(self.sub_performance_stats)
+                    sub_df.to_excel(writer, sheet_name='订阅性能详情', index=False)
+                    
+                if hasattr(self, 'receive_performance_stats') and self.receive_performance_stats:
+                    receive_df = pd.DataFrame(self.receive_performance_stats)
+                    receive_df.to_excel(writer, sheet_name='接收性能详情', index=False)
                 else:
-                    self.logger.warning(f"资源数据列数不足: {len(resource_df.columns)}，跳过资源数据写入")
-                    # 创建Excel报告（不包含资源数据）
-                    with pd.ExcelWriter(report_path, engine='openpyxl') as writer:
-                        overview_df.to_excel(writer, sheet_name='测试概述', index=False)
-                        conn_data.to_excel(writer, sheet_name='连接性能', index=False)
-                        receive_data.to_excel(writer, sheet_name='消息接收性能', index=False)
-                        publish_data.to_excel(writer, sheet_name='消息发布性能', index=False)
-                        loss_data_df.to_excel(writer, sheet_name='消息丢失统计', index=False)
-                        latency_df.to_excel(writer, sheet_name='延迟分布', index=False)
+                    self.logger.warning(f"没有订阅或接收性能数据，将跳过这些数据写入")
             else:
                 self.logger.warning("没有资源使用数据，将跳过资源数据写入")
                 # 创建Excel报告（不包含资源数据）
@@ -1139,6 +1169,12 @@ class MQTTLoadTester:
         lost_messages = max(0, total_published - total_received)
         loss_rate = (lost_messages / total_published * 100) if total_published > 0 else 0
 
+        # 确保必要的属性存在
+        if not hasattr(self, 'message_ids'):
+            self.message_ids = {}
+        if not hasattr(self, 'received_ids'):
+            self.received_ids = set()
+        
         # 基于消息ID的丢失率
         sent_ids_count = len(self.message_ids)
         received_ids_count = len(self.received_ids)
@@ -1457,6 +1493,22 @@ class MQTTLoadTester:
             
             return report_data
             
+        except KeyboardInterrupt:
+            self.logger.info("收到中断信号，正在安全终止测试...")
+            print("\n测试被用户中断，正在生成中间报告...")
+            
+            # 标记测试停止
+            self.running = False
+            
+            # 强制完成报告生成流程
+            self.generate_final_report()  # 确保调用此方法生成最终报告
+            self.generate_excel_report()  # 确保生成Excel报告
+            
+            # 清理资源
+            self.cleanup()
+            
+            return {"状态": "已中断", "报告": "已生成中断状态报告"}
+        
         except Exception as e:
             self.logger.error(f"运行测试时出错: {e}")
             traceback.print_exc()
@@ -1598,6 +1650,7 @@ class MQTTLoadTester:
                     "连接指标": [
                         "最小连接时间(毫秒)",
                         "最大连接时间(毫秒)",
+                        "连接标准差(毫秒)",
                         "平均连接时间(毫秒)",
                         "总连接数",
                         "成功连接率"
@@ -1606,6 +1659,7 @@ class MQTTLoadTester:
                         f"{self.min_connect_time:.2f}",
                         f"{self.max_connect_time:.2f}",
                         f"{self.avg_connect_time:.2f}",
+                        f"{self.conn_time_std_dev:.2f}",
                         len(self.connect_elapsed_time),
                         f"{(len(self.connect_elapsed_time) - self.connection_failures) / max(1, len(self.connect_elapsed_time)) * 100:.2f}%"
                     ]
@@ -1762,10 +1816,26 @@ def parse_arguments():
 
 
 def main():
-    """主函数"""
-    args = parse_arguments()
-    tester = MQTTLoadTester(args.config)
-    tester.run_test()
+    try:
+        # 解析命令行参数
+        parser = argparse.ArgumentParser(description='MQTT负载测试工具')
+        parser.add_argument('-c', '--config', help='配置文件路径', default='config.json')
+        args = parser.parse_args()
+
+        # 创建并运行测试实例
+        tester = MQTTLoadTester(config_file=args.config)
+        tester.run_test()
+    except KeyboardInterrupt:
+        print("\n\n程序被用户中断！正在尝试生成报告...")
+        if 'tester' in locals():
+            tester.running = False
+            tester.generate_final_report()
+            tester.generate_excel_report()
+            tester.cleanup()
+        print("中断处理完成，已尽可能生成报告。")
+    except Exception as e:
+        print(f"程序出现错误: {e}")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
