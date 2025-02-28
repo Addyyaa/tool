@@ -58,15 +58,17 @@ MQTT性能测试工具（mqttPerf）可以模拟大量客户端同时连接、�
 git clone https://github.com/yourusername/mqtt-performance-tool.git
 cd mqtt-performance-tool
 
-# 创建虚拟环境（推荐）
+# 创建虚拟环境
 python -m venv mqtt_test_env
-source mqtt_test_env/bin/activate  # Linux/Mac
-# 或
-mqtt_test_env\Scripts\activate  # Windows
+
+# 激活虚拟环境
+# Windows
+mqtt_test_env\Scripts\activate
+# Linux/Mac
+source mqtt_test_env/bin/activate
 
 # 安装依赖
 pip install -r requirements.txt
-```
 
 
 ## 配置文件
@@ -199,5 +201,13 @@ python mqttPerf.py -c custom_config.json
 5. **关注异常值**：特别注意延迟分布中的极端值
 
 ---
+
+# requirements.txt
+paho-mqtt>=1.6.1     # MQTT客户端库
+pandas>=1.3.0        # 数据分析和Excel报告生成
+openpyxl>=3.0.9      # Excel文件处理
+psutil>=5.9.0        # 系统资源监控
+matplotlib>=3.5.0    # 图表生成（可选，用于资源使用图表）
+numpy>=1.20.0        # 科学计算库（pandas依赖）
 
 

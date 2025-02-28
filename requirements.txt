@@ -1,0 +1,7 @@
+# requirements.txt
+paho-mqtt>=1.6.1     # MQTT客户端库
+pandas>=1.3.0        # 数据分析和Excel报告生成
+openpyxl>=3.0.9      # Excel文件处理
+psutil>=5.9.0        # 系统资源监控
+matplotlib>=3.5.0    # 图表生成（可选，用于资源使用图表）
+numpy>=1.20.0        # 科学计算库（pandas依赖）
