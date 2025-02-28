@@ -117,6 +117,11 @@ class MQTTLoadTester:
                 self.config.get("num_heartbeats", 0)
         )
 
+        # 添加订阅者就绪跟踪
+        self.subscriber_ready_count = 0
+        self.subscriber_ready_lock = threading.RLock()
+        self.all_subscribers_ready = threading.Event()
+
     def setup_default_logging(self):
         """设置默认日志系统"""
         self.logger = logging.getLogger(__name__)
@@ -358,6 +363,11 @@ class MQTTLoadTester:
                 print(f"连接统计 - 最小: {self.min_connect_time: .2f}毫秒, 最大: {self.max_connect_time: .2f}毫秒, " +
                       f"平均: {self.avg_connect_time: .2f}毫秒, 总连接数: {len(self.connect_elapsed_time)}")
 
+            # 如果是订阅者客户端连接成功
+            if client_id.startswith("conn_subscriber_"):
+                # 订阅者连接成功，但还需等待订阅完成
+                self.logger.info(f"订阅者 {client_id} 已连接")
+
         except Exception as e:
             self.logger.error(f"处理连接事件时出错: {e}")
 
@@ -506,6 +516,17 @@ class MQTTLoadTester:
                         if generic_topic not in self.sub_spend_time:
                             self.sub_spend_time[generic_topic] = []
                         self.sub_spend_time[generic_topic].append(token_time)
+
+                # 如果是订阅者客户端完成订阅
+                if client_id.startswith("conn_subscriber_"):
+                    with self.subscriber_ready_lock:
+                        self.subscriber_ready_count += 1
+                        self.logger.info(f"订阅者 {client_id} 已完成订阅 ({self.subscriber_ready_count}/{self.config['num_subscribers']})")
+                        
+                        # 检查是否所有订阅者都已就绪
+                        if self.subscriber_ready_count >= self.config['num_subscribers']:
+                            self.logger.info("所有订阅者都已连接并完成订阅!")
+                            self.all_subscribers_ready.set()
             else:
                 self.logger.error(f"{client_id} 订阅失败，返回码：{result_code}")
                 print(f"警告: {client_id} 订阅失败，返回码：{result_code}")
@@ -1443,14 +1464,16 @@ class MQTTLoadTester:
             # 测试开始时间
             self.test_start_time = datetime.now()
             self.logger.info(f"测试开始时间: {self.test_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-            # 重置测试状态和指标
+            
+            # 重置测试状态
             self.running = True
             self.test_ended = False
             self.subscribers = []
             self.publishers = []
             self.heartbeats = []
-
+            self.subscriber_ready_count = 0
+            self.all_subscribers_ready.clear()
+            
             # 重置消息计数器
             self.receive_msg_count = []
             self.publish_msg_count = []
@@ -1471,10 +1494,18 @@ class MQTTLoadTester:
                     self.subscribers.append(client)
                     self.logger.info(f"订阅者 {client_id} 已创建并订阅主题")
 
-            # 等待订阅者完成连接和订阅
-            print("等待订阅者连接和订阅完成...")
-            time.sleep(2)
-
+            # 等待所有订阅者连接并完成订阅
+            self.logger.info("等待所有订阅者连接并完成订阅...")
+            print("等待所有订阅者连接并完成订阅...")
+            
+            wait_timeout = 30  # 等待超时时间（秒）
+            if not self.all_subscribers_ready.wait(timeout=wait_timeout):
+                self.logger.warning(f"等待订阅者就绪超时({wait_timeout}秒)! 只有 {self.subscriber_ready_count}/{self.config['num_subscribers']} 个订阅者就绪")
+                print(f"警告: 等待订阅者就绪超时! 只有 {self.subscriber_ready_count}/{self.config['num_subscribers']} 个订阅者就绪")
+            else:
+                self.logger.info("所有订阅者已就绪，开始创建并启动发布者")
+                print("所有订阅者已就绪，开始创建并启动发布者")
+            
             # 创建并启动发布者线程
             print(f"创建 {self.config['num_publishers']} 个发布者...")
             publish_threads = []
@@ -1501,6 +1532,16 @@ class MQTTLoadTester:
                     publish_threads.append(thread)
 
                     self.logger.info(f"发布者 {client_id} 已创建并开始发布消息到 {pub_topic}")
+
+            # 启动心跳报文发布客户端
+            for i in range(self.config["num_heartbeats"]):
+                client_id = f"conn_heartbeat_{i + 1}"
+                pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
+                client = self.create_mqtt_client(client_id)
+                self.connect_client(client)
+                future = executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
+                                         "心跳包")
+                self.heartbeats.append((client, future))
 
             # 等待测试完成
             test_duration = self.config.get("test_duration", 60)
