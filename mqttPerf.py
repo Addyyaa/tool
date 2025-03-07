@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from colorama import init
 import traceback
 import sys
+import concurrent.futures
 
 # 配置锁，确保线程安全
 connect_time_lock = threading.RLock()
@@ -164,9 +165,9 @@ class MQTTLoadTester:
             "port": 1883,
             "username": "mqtttest",
             "password": "mqtttest2022",
-            "num_subscribers": 500,
-            "num_publishers": 200,
-            "num_heartbeats": 500,
+            "num_subscribers": 50,
+            "num_publishers": 20,
+            "num_heartbeats": 50,
             "qos_level": 1,
             "test_duration": 20,
             "publish_interval": 1,
@@ -740,12 +741,13 @@ class MQTTLoadTester:
                 self.publishers.append((client, future))
 
             # 启动心跳报文发布客户端
+            heartbeat_executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get("num_heartbeats", 5))
             for i in range(self.config["num_heartbeats"]):
                 client_id = f"conn_heartbeat_{i + 1}"
                 pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
                 client = self.create_mqtt_client(client_id)
                 self.connect_client(client)
-                future = executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
+                future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
                                          "心跳包")
                 self.heartbeats.append((client, future))
 
@@ -1534,12 +1536,13 @@ class MQTTLoadTester:
                     self.logger.info(f"发布者 {client_id} 已创建并开始发布消息到 {pub_topic}")
 
             # 启动心跳报文发布客户端
+            heartbeat_executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get("num_heartbeats", 5))
             for i in range(self.config["num_heartbeats"]):
                 client_id = f"conn_heartbeat_{i + 1}"
                 pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
                 client = self.create_mqtt_client(client_id)
                 self.connect_client(client)
-                future = executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
+                future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
                                          "心跳包")
                 self.heartbeats.append((client, future))
 
