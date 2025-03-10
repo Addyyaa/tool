@@ -268,11 +268,12 @@ class MQTTLoadTester:
                     # 订阅发布主题
                     for topic in self.config["pub_topics"]:
                         client.subscribe(topic, qos=self.config.get("qos_level", 0))
-                        print(f"订阅者 {client_id} 订阅主题: {topic}")
-                        self.logger.info(f"订阅者 {client_id} 订阅主题: {topic}")
+                        print(f"订阅者 {client_id} 订阅发布主题: {topic}")
+                        self.logger.info(f"订阅者 {client_id} 订阅发布主题: {topic}")
 
                     # 也订阅订阅主题列表中的主题
                     for topic in self.config["sub_topics"]:
+                        userdata["topic"] = topic
                         client.subscribe(topic, qos=self.config.get("qos_level", 0))
                         print(f"订阅者 {client_id} 订阅主题: {topic}")
                         self.logger.info(f"订阅者 {client_id} 订阅主题: {topic}")
@@ -533,7 +534,9 @@ class MQTTLoadTester:
                         self.subscriber_ready_count += 1
                         self.logger.info(
                             f"订阅者 {client_id} 已完成订阅 ({self.subscriber_ready_count}/"
-                            f"{len(self.config['sub_topics'])})，properties：{properties}，userdata：{userdata}，mid：{mid}")
+                            f"{len(self.config['sub_topics']) + len(self.config['pub_topics'])})，properties：{properties}，userdata"
+                            f"：{userdata}，mid"
+                            f"：{mid}")
 
                         # 检查是否所有订阅者都已就绪
                         if self.subscriber_ready_count >= self.config['num_subscribers']:
@@ -1486,7 +1489,7 @@ class MQTTLoadTester:
             # 创建订阅者
             self.logger.info(f"创建 {self.config['num_subscribers']} 个订阅者...")
             for i in range(self.config['num_subscribers']):
-                client_id = f"pad_test_subscriber_{i}"
+                client_id = f"pad_test_subscriber_{i+1}"
                 client = self.create_mqtt_client(client_id, subscribe=True)
                 if client:
                     self.subscribers.append(client)
@@ -1511,7 +1514,7 @@ class MQTTLoadTester:
             publish_threads = []
 
             for i in range(self.config['num_publishers']):
-                client_id = f"conn_publisher_{i}"
+                client_id = f"conn_publisher_{i+1}"
                 client = self.create_mqtt_client(client_id)
 
                 if client:
