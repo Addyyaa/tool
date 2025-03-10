@@ -35,6 +35,7 @@ def get_client_id(client):
 
 
 class MQTTLoadTester:
+
     def __init__(self, config_file=None):
         """初始化测试对象"""
         # 初始化logger属性
@@ -123,6 +124,63 @@ class MQTTLoadTester:
         self.subscriber_ready_lock = threading.RLock()
         self.all_subscribers_ready = threading.Event()
 
+    def load_config(self, config_file):
+        """加载配置文件"""
+        default_config = {
+            "broker": "139.224.192.36",
+            "port": 1883,
+            "username": "mqtttest",
+            "password": "mqtttest2022",
+            "num_subscribers": 1,
+            "num_publishers": 1,
+            "num_heartbeats": 3,
+            "qos_level": 1,
+            "test_duration": 10,
+            "publish_interval": 1,
+            "heartbeat_interval": 5,
+            "pub_topics": ["/screen/magicframe/cloud/downloadpicture[-flat]/mf50"],
+            "sub_topics": ["/screen/magicframe/cloud/setplaymode[-flat]/mf50",
+                           "/screen/magicframe/cloud/downloadpicture[-flat]/mf50",
+                           "/screen/magicframe/cloud/setbrightness[-flat]/mf50",
+                           "/screen/magicframe/cloud/setcolortemp[-flat]/mf50",
+                           "/screen/magicframe/cloud/turnon[-flat]/mf50",
+                           "/screen/magicframe/cloud/setsleepschedule[-flat]/mf50",
+                           "/screen/magicframe/cloud/playsync[-flat]/mf50",
+                           "/screen/magicframe/cloud/delvideo[-flat]/mf50",
+                           "/screen/magicframe/cloud/delpicture[-flat]/mf50",
+                           "/screen/magicframe/cloud/upgrade[-flat]/mf50",
+                           "/screen/magicframe/cloud/broadcast[-flat]/mf50",
+                           "/screen/magicframe/cloud/setscreengroupidandno[-flat]/mf50",
+                           "/screen/magicframe/cloud/setvolume[-flat]/mf50",
+                           "/screen/magicframe/cloud/setdirection[-flat]/mf50",
+                           "/screen/magicframe/cloud/reset[-flat]/mf50",
+                           "/screen/magicframe/cloud/settimezone[-flat]/mf50", ],
+            "heartbeat_topics": ["mf50/screen/cloud/screengroupstatus[-flat]/"],
+            "heartBeat": ["mf50/screen/cloud/heartbeat[-flat]/"],
+            "excel_report_dir": "reports",
+            "max_threads": 200,
+            "debug": True,
+            "report_interval": 5,
+            "resource_monitor_interval": 5,
+            "log_file": None,
+            "keep_alive": 60,  # 添加keep_alive参数
+            "heartbeat_msg": "{\"content\": \"这是mqtt测试心跳消息\", \"timestamp\": \"1715145600000\"}"
+        }
+
+        if config_file and os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    user_config = json.load(f)
+                    # 更新默认配置
+                    default_config.update(user_config)
+                    self.logger.info(f"已加载配置文件: {config_file}")
+            except Exception as e:
+                self.logger.error(f"加载配置文件出错: {e}")
+        else:
+            self.logger.warning("未找到配置文件，使用默认配置")
+
+        return default_config
+
     def setup_default_logging(self):
         """设置默认日志系统"""
         self.logger = logging.getLogger(__name__)
@@ -157,61 +215,6 @@ class MQTTLoadTester:
             file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             file_handler.setFormatter(file_formatter)
             self.logger.addHandler(file_handler)
-
-    def load_config(self, config_file):
-        """加载配置文件"""
-        default_config = {
-            "broker": "139.224.192.36",
-            "port": 1883,
-            "username": "mqtttest",
-            "password": "mqtttest2022",
-            "num_subscribers": 50,
-            "num_publishers": 20,
-            "num_heartbeats": 50,
-            "qos_level": 1,
-            "test_duration": 20,
-            "publish_interval": 1,
-            "heartbeat_interval": 5,
-            "pub_topics": ["/screen/magicframe/cloud/downloadpicture[-flat]/mf50"],
-            "sub_topics": ["/screen/magicframe/cloud/setplaymode[-flat]/mf50",
-                           "/screen/magicframe/cloud/downloadpicture[-flat]/mf50",
-                           "/screen/magicframe/cloud/setbrightness[-flat]/mf50",
-                           "/screen/magicframe/cloud/setcolortemp[-flat]/mf50",
-                           "/screen/magicframe/cloud/turnon[-flat]/mf50",
-                           "/screen/magicframe/cloud/setsleepschedule[-flat]/mf50",
-                           "/screen/magicframe/cloud/playsync[-flat]/mf50",
-                           "/screen/magicframe/cloud/delvideo[-flat]/mf50",
-                           "/screen/magicframe/cloud/delpicture[-flat]/mf50",
-                           "/screen/magicframe/cloud/upgrade[-flat]/mf50",
-                           "/screen/magicframe/cloud/broadcast[-flat]/mf50",
-                           "/screen/magicframe/cloud/setscreengroupidandno[-flat]/mf50",
-                           "/screen/magicframe/cloud/setvolume[-flat]/mf50",
-                           "/screen/magicframe/cloud/setdirection[-flat]/mf50",
-                           "/screen/magicframe/cloud/reset[-flat]/mf50",
-                           "/screen/magicframe/cloud/settimezone[-flat]/mf50", ],
-            "heartbeat_topics": ["mf50/screen/cloud/screengroupstatus[-flat]/"],
-            "excel_report_dir": "reports",
-            "max_threads": 200,
-            "debug": False,
-            "report_interval": 5,
-            "resource_monitor_interval": 5,
-            "log_file": None,
-            "keep_alive": 60  # 添加keep_alive参数
-        }
-
-        if config_file and os.path.exists(config_file):
-            try:
-                with open(config_file, 'r') as f:
-                    user_config = json.load(f)
-                    # 更新默认配置
-                    default_config.update(user_config)
-                    self.logger.info(f"已加载配置文件: {config_file}")
-            except Exception as e:
-                self.logger.error(f"加载配置文件出错: {e}")
-        else:
-            self.logger.warning("未找到配置文件，使用默认配置")
-
-        return default_config
 
     def create_mqtt_client(self, client_id, subscribe=False):
         """创建MQTT客户端"""
@@ -405,7 +408,7 @@ class MQTTLoadTester:
             print(f"\n===== 订阅者收到消息 =====")
             print(f"订阅者: {client_id}")
             print(f"主题: {topic}")
-            print(f"内容: {payload[:150]}{'...' if len(payload) > 150 else ''}")
+            print(f"内容: {payload}")
             print("==========================\n")
 
             # 记录到日志
@@ -414,8 +417,14 @@ class MQTTLoadTester:
             # 处理消息，尝试解析JSON
             try:
                 message_data = json.loads(payload)
-                message_id = message_data.get("id", "unknown")
-                send_time = message_data.get("timestamp", 0)
+                print(f"解析成功: {message_data}, type: {type(message_data)}")
+
+                if type(message_data) == dict:
+                    message_id = message_data.get("id", "unknown")
+                    send_time = message_data.get("timestamp", 0)
+                else:
+                    message_id = client_id
+                    send_time = 0
 
                 # 计算消息延迟(毫秒)
                 latency_ms = (received_time - send_time) * 1000 if send_time > 0 else 0
@@ -519,14 +528,15 @@ class MQTTLoadTester:
                         self.sub_spend_time[generic_topic].append(token_time)
 
                 # 如果是订阅者客户端完成订阅
-                if client_id.startswith("conn_subscriber_"):
+                if "subscriber" in client_id:
                     with self.subscriber_ready_lock:
                         self.subscriber_ready_count += 1
-                        self.logger.info(f"订阅者 {client_id} 已完成订阅 ({self.subscriber_ready_count}/{self.config['num_subscribers']})")
-                        
+                        self.logger.info(
+                            f"订阅者 {client_id} 已完成订阅 ({self.subscriber_ready_count}/"
+                            f"{len(self.config['sub_topics'])})，properties：{properties}，userdata：{userdata}，mid：{mid}")
+
                         # 检查是否所有订阅者都已就绪
                         if self.subscriber_ready_count >= self.config['num_subscribers']:
-                            self.logger.info("所有订阅者都已连接并完成订阅!")
                             self.all_subscribers_ready.set()
             else:
                 self.logger.error(f"{client_id} 订阅失败，返回码：{result_code}")
@@ -548,7 +558,7 @@ class MQTTLoadTester:
                 # 添加调试日志
                 if self.config.get("debug", False):
                     client_id = userdata.get('client_id', 'unknown') if userdata else 'unknown'
-                    self.logger.debug(f"消息发布成功: 客户端={client_id}, mid={mid}")
+                    self.logger.debug(f"消息发布成功: 客户端={client_id}, mid={mid}，用户数据：{userdata}")
         except Exception as e:
             # 定义一个默认的client_id，避免未定义引用
             client_id = 'unknown'
@@ -563,7 +573,7 @@ class MQTTLoadTester:
             self.qos_failure[qos] += 1
             self.logger.error(f"{get_client_id(client)} 消息发布失败，mid: {mid}")
 
-    def publish_messages(self, client, topic, interval, msg_type="消息"):
+    def publish_messages(self, client, topic, interval, msg_type="消息", msg="未传入消息"):
         """定期发布消息"""
         # 在try块外先定义client_id，确保即使发生异常也能被访问
         client_id = 'unknown'
@@ -595,31 +605,18 @@ class MQTTLoadTester:
                         # 创建消息ID
                         message_id = f"{client_id}_{counter}"
 
-                        # 构建消息内容
-                        message = {
-                            "id": message_id,
-                            "client": client_id,
-                            "type": msg_type,
-                            "timestamp": now,
-                            "seq": counter,
-                            "data": "测试消息内容 " * 5  # 添加一些内容
-                        }
-
-                        # 转换为JSON
-                        message_json = json.dumps(message)
-
                         # 打印发布的消息
                         print(f"\n----- 发布新消息 -----")
                         print(f"发布者: {client_id}")
                         print(f"主题: {topic}")
-                        print(f"内容: {message_json[:150]}...")
+                        print(f"内容: {msg}")
                         print("------------------------\n")
 
                         # 使用客户端锁保护发布操作
                         with self.client_lock:
                             # 发布消息到指定主题
                             qos = self.config.get("qos_level", 0)
-                            result = client.publish(topic, message_json, qos=qos)
+                            result = client.publish(topic, msg, qos=qos)
 
                             # 记录发布消息
                             with publish_msg_lock:
@@ -708,66 +705,65 @@ class MQTTLoadTester:
         except Exception as e:
             self.logger.error(f"生成性能报告时出错: {e}")
 
-    def start_mqtt_clients(self):
-        """启动MQTT客户端"""
-        # 使用线程池管理
-        executor = ThreadPoolExecutor(max_workers=min(200, self.connections_count + 10))
-
-        try:
-            # 启动资源监控
-            monitor_thread = threading.Thread(target=self.monitor_resources)
-            monitor_thread.daemon = True
-            monitor_thread.start()
-
-            # 启动性能报告线程
-            report_thread = threading.Thread(target=self.periodic_report)
-            report_thread.daemon = True
-            report_thread.start()
-
-            # 启动订阅客户端
-            for i in range(self.config["num_subscribers"]):
-                client_id = f"conn_subscriber_{i + 1}"
-                client = self.create_mqtt_client(client_id, subscribe=True)
-                self.connect_client(client, subscribe=True)
-                self.subscribers.append(client)
-
-            # 启动发布客户端
-            for i in range(self.config["num_publishers"]):
-                client_id = f"conn_publisher_{i + 1}"
-                pub_topic = f"conn_subscriber_{i + 1}" + self.config["pub_topics"][0]
-                client = self.create_mqtt_client(client_id)
-                self.connect_client(client)
-                future = executor.submit(self.publish_messages, client, pub_topic, self.config["publish_interval"])
-                self.publishers.append((client, future))
-
-            # 启动心跳报文发布客户端
-            heartbeat_executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get("num_heartbeats", 5))
-            for i in range(self.config["num_heartbeats"]):
-                client_id = f"conn_heartbeat_{i + 1}"
-                pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
-                client = self.create_mqtt_client(client_id)
-                self.connect_client(client)
-                future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
-                                         "心跳包")
-                self.heartbeats.append((client, future))
-
-            # 保持主线程活跃
-            while True:
-                time.sleep(1)
-
-        except KeyboardInterrupt:
-            self.logger.info("收到中断信号，正在终止测试...")
-            self.running = False
-            self.generate_final_report()
-            self.generate_excel_report()  # 生成Excel报告
-            self.cleanup()
-            executor.shutdown(wait=False)
-        except Exception as e:
-            self.logger.error(f"测试过程中发生错误: {e}")
-            self.running = False
-            self.generate_excel_report()  # 生成Excel报告
-            self.cleanup()
-            executor.shutdown(wait=False)
+    # def start_mqtt_clients(self):
+    #     """启动MQTT客户端"""
+    #     # 使用线程池管理
+    #     executor = ThreadPoolExecutor(max_workers=min(200, self.connections_count + 10))
+    #
+    #     try:
+    #         # 启动资源监控
+    #         monitor_thread = threading.Thread(target=self.monitor_resources)
+    #         monitor_thread.daemon = True
+    #         monitor_thread.start()
+    #
+    #         # 启动性能报告线程
+    #         report_thread = threading.Thread(target=self.periodic_report)
+    #         report_thread.daemon = True
+    #         report_thread.start()
+    #
+    #         # 启动订阅客户端
+    #         for i in range(self.config["num_subscribers"]):
+    #             client_id = f"conn_subscriber_{i + 1}"
+    #             client = self.create_mqtt_client(client_id, subscribe=True)
+    #             self.connect_client(client, subscribe=True)
+    #             self.subscribers.append(client)
+    #
+    #         # 启动发布客户端
+    #         for i in range(self.config["num_publishers"]):
+    #             client_id = f"conn_publisher_{i + 1}"
+    #             pub_topic = f"conn_subscriber_{i + 1}" + self.config["pub_topics"][0]
+    #             client = self.create_mqtt_client(client_id)
+    #             self.connect_client(client)
+    #             future = executor.submit(self.publish_messages, client, pub_topic, self.config["publish_interval"])
+    #             self.publishers.append((client, future))
+    #
+    #         # 启动心跳报文发布客户端
+    #         heartbeat_executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get("num_heartbeats", 5))
+    #         for i in range(self.config["num_heartbeats"]):
+    #             client_id = f"pad_conn_heartbeat_{i + 1}"
+    #             pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
+    #             client = self.create_mqtt_client(client_id)
+    #             self.connect_client(client)
+    #             future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval", f"客户端：{client_id}{self.config['heartbeat_msg']}"])
+    #             self.heartbeats.append((client, future))
+    #
+    #         # 保持主线程活跃
+    #         while True:
+    #             time.sleep(1)
+    #
+    #     except KeyboardInterrupt:
+    #         self.logger.info("收到中断信号，正在终止测试...")
+    #         self.running = False
+    #         self.generate_final_report()
+    #         self.generate_excel_report()  # 生成Excel报告
+    #         self.cleanup()
+    #         executor.shutdown(wait=False)
+    #     except Exception as e:
+    #         self.logger.error(f"测试过程中发生错误: {e}")
+    #         self.running = False
+    #         self.generate_excel_report()  # 生成Excel报告
+    #         self.cleanup()
+    #         executor.shutdown(wait=False)
 
     def cleanup(self):
         """清理资源，关闭所有客户端连接"""
@@ -1466,7 +1462,7 @@ class MQTTLoadTester:
             # 测试开始时间
             self.test_start_time = datetime.now()
             self.logger.info(f"测试开始时间: {self.test_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            
+
             # 重置测试状态
             self.running = True
             self.test_ended = False
@@ -1475,7 +1471,7 @@ class MQTTLoadTester:
             self.heartbeats = []
             self.subscriber_ready_count = 0
             self.all_subscribers_ready.clear()
-            
+
             # 重置消息计数器
             self.receive_msg_count = []
             self.publish_msg_count = []
@@ -1490,7 +1486,7 @@ class MQTTLoadTester:
             # 创建订阅者
             self.logger.info(f"创建 {self.config['num_subscribers']} 个订阅者...")
             for i in range(self.config['num_subscribers']):
-                client_id = f"conn_subscriber_{i}"
+                client_id = f"pad_test_subscriber_{i}"
                 client = self.create_mqtt_client(client_id, subscribe=True)
                 if client:
                     self.subscribers.append(client)
@@ -1499,15 +1495,17 @@ class MQTTLoadTester:
             # 等待所有订阅者连接并完成订阅
             self.logger.info("等待所有订阅者连接并完成订阅...")
             print("等待所有订阅者连接并完成订阅...")
-            
+
             wait_timeout = 30  # 等待超时时间（秒）
             if not self.all_subscribers_ready.wait(timeout=wait_timeout):
-                self.logger.warning(f"等待订阅者就绪超时({wait_timeout}秒)! 只有 {self.subscriber_ready_count}/{self.config['num_subscribers']} 个订阅者就绪")
-                print(f"警告: 等待订阅者就绪超时! 只有 {self.subscriber_ready_count}/{self.config['num_subscribers']} 个订阅者就绪")
+                self.logger.warning(
+                    f"等待订阅者就绪超时({wait_timeout}秒)! 只有 {self.subscriber_ready_count}/{self.config['num_subscribers']} 个订阅者就绪")
+                print(
+                    f"警告: 等待订阅者就绪超时! 只有 {self.subscriber_ready_count}/{self.config['num_subscribers']} 个订阅者就绪")
             else:
                 self.logger.info("所有订阅者已就绪，开始创建并启动发布者")
                 print("所有订阅者已就绪，开始创建并启动发布者")
-            
+
             # 创建并启动发布者线程
             print(f"创建 {self.config['num_publishers']} 个发布者...")
             publish_threads = []
@@ -1538,12 +1536,12 @@ class MQTTLoadTester:
             # 启动心跳报文发布客户端
             heartbeat_executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get("num_heartbeats", 5))
             for i in range(self.config["num_heartbeats"]):
-                client_id = f"conn_heartbeat_{i + 1}"
-                pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
+                client_id = f"pad_test{i + 1}"
+                pub_topic = self.config["heartBeat"][0] + f"{client_id}"
                 client = self.create_mqtt_client(client_id)
                 self.connect_client(client)
-                future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval"],
-                                         "心跳包")
+                future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config[
+                    "heartbeat_interval"], "心跳报文", f"设备：{client_id}：{self.config['heartbeat_msg']}")
                 self.heartbeats.append((client, future))
 
             # 等待测试完成
