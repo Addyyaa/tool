@@ -52,6 +52,38 @@ class ScreenDetector:
             self.connected = False
             return False
 
+    def check_device_booting(self):
+        """检查设备是否处于启动过程中"""
+        if not self.connected or not self.ser:
+            return False
+        
+        try:
+            # 读取当前缓冲区内容但不清空
+            boot_markers = ["Version:", "Auto-Negotiation", "[WDT]", "SPINAND:", "MMC:", "I2C:"]
+            
+            # 不发送任何命令，只读取当前输出
+            start_time = time.time()
+            buffer = ""
+            
+            # 最多读取2秒
+            while (time.time() - start_time) < 2:
+                if self.ser.in_waiting > 0:
+                    data = self.ser.read(self.ser.in_waiting).decode('utf-8', errors='replace')
+                    buffer += data
+                    
+                # 一旦检测到任何启动标记，立即返回True
+                for marker in boot_markers:
+                    if marker in buffer:
+                        print(Fore.YELLOW + f"检测到设备启动标记: {marker}，等待设备启动...")
+                        return True
+                        
+                time.sleep(0.1)
+                
+            return False
+        except Exception as e:
+            print(Fore.RED + f"检查设备启动状态时出错: {str(e)}")
+            return False
+
     def send_command(self, command, wait_time=1.0):
         """发送命令到串口并获取响应"""
         if not self.connected or not self.ser:
@@ -63,6 +95,12 @@ class ScreenDetector:
             if not self.check_device_connection():
                 print(Fore.RED + "设备已断开，无法发送命令")
                 return None
+            
+            # 检查设备是否处于启动过程
+            if self.check_device_booting():
+                print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
+                time.sleep(5)  # 等待设备启动完成
+                print(Fore.GREEN + "继续执行操作")
 
             # 完全清空缓冲区，等待一段时间确保当前所有输出都被读取并丢弃
             time.sleep(0.5)  # 等待可能的输出
@@ -76,7 +114,7 @@ class ScreenDetector:
 
             # 保证命令发送成功
             if cmdlen != len(cmd):
-                print(Fore.RED + "串口接触不良，请检查后重新插入")
+                print(Fore.RED + "串口接触不良，请检查后重新插入，若仍然无法读取到id，请重启设备")
                 return None
 
             # 等待命令执行
@@ -111,7 +149,7 @@ class ScreenDetector:
                 decoded = response.decode('utf-8', errors='replace')
                 return decoded
             else:
-                print(Fore.RED + "设备串口接触不良，请检查后重新插入")
+                print(Fore.RED + "设备串口接触不良，请检查后重新插入，若重新插入还不行请重启设备")
                 return None
         except Exception as e:
             print(Fore.RED + f"发送命令出错: {str(e)}")
@@ -244,6 +282,12 @@ class ScreenDetector:
                         self.connected = True
                         self.current_port = port
                         print(f"\r{Fore.GREEN}成功重新连接到原串口: {port}" + " " * 30)
+                        
+                        # 检查设备是否处于启动过程
+                        if self.check_device_booting():
+                            print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
+                            time.sleep(5)  # 等待设备启动完成
+                        
                         return True
                     else:
                         # 原端口不可用，连接到第一个可用端口
@@ -252,6 +296,12 @@ class ScreenDetector:
                         self.connected = True
                         self.current_port = new_port
                         print(f"\r{Fore.GREEN}连接到新串口: {new_port}" + " " * 30)
+                        
+                        # 检查设备是否处于启动过程
+                        if self.check_device_booting():
+                            print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
+                            time.sleep(5)  # 等待设备启动完成
+                        
                         return True
                 except Exception as e:
                     print(f"\r{Fore.RED}尝试连接失败: {str(e)}" + " " * 30)
@@ -293,7 +343,6 @@ class ScreenDetector:
                     break
 
         if not self.check_file_exists(version_path):
-            print(Fore.RED + f"警告: 文件 {version_path} 可能不存在")
             # 尝试其他可能的路径
             for path in ["/software/version.ini", "/etc/version.ini"]:
                 if self.check_file_exists(path):
