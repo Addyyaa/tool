@@ -111,7 +111,7 @@ class ScreenDetector:
                 decoded = response.decode('utf-8', errors='replace')
                 return decoded
             else:
-                print(Fore.RED + "未收到任何响应")
+                print(Fore.RED + "设备串口接触不良，请检查后重新插入")
                 return None
         except Exception as e:
             print(Fore.RED + f"发送命令出错: {str(e)}")
@@ -286,7 +286,6 @@ class ScreenDetector:
 
         # 验证文件路径
         if not self.check_file_exists(screen_id_path):
-            print(Fore.RED + f"警告: 文件 {screen_id_path} 可能不存在")
             # 尝试其他可能的路径
             for path in ["/data/customer/screenId.ini", "/etc/screenId.ini"]:
                 if self.check_file_exists(path):
