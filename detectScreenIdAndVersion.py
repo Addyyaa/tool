@@ -56,29 +56,29 @@ class ScreenDetector:
         """检查设备是否处于启动过程中"""
         if not self.connected or not self.ser:
             return False
-        
+
         try:
             # 读取当前缓冲区内容但不清空
             boot_markers = ["Version:", "Auto-Negotiation", "[WDT]", "SPINAND:", "MMC:", "I2C:"]
-            
+
             # 不发送任何命令，只读取当前输出
             start_time = time.time()
             buffer = ""
-            
+
             # 最多读取2秒
             while (time.time() - start_time) < 2:
                 if self.ser.in_waiting > 0:
                     data = self.ser.read(self.ser.in_waiting).decode('utf-8', errors='replace')
                     buffer += data
-                    
+
                 # 一旦检测到任何启动标记，立即返回True
                 for marker in boot_markers:
                     if marker in buffer:
                         print(Fore.YELLOW + f"检测到设备启动标记: {marker}，等待设备启动...")
                         return True
-                        
+
                 time.sleep(0.1)
-                
+
             return False
         except Exception as e:
             print(Fore.RED + f"检查设备启动状态时出错: {str(e)}")
@@ -95,7 +95,7 @@ class ScreenDetector:
             if not self.check_device_connection():
                 print(Fore.RED + "设备已断开，无法发送命令")
                 return None
-            
+
             # 检查设备是否处于启动过程
             if self.check_device_booting():
                 print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
@@ -282,12 +282,12 @@ class ScreenDetector:
                         self.connected = True
                         self.current_port = port
                         print(f"\r{Fore.GREEN}成功重新连接到原串口: {port}" + " " * 30)
-                        
+
                         # 检查设备是否处于启动过程
                         if self.check_device_booting():
                             print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
                             time.sleep(5)  # 等待设备启动完成
-                        
+
                         return True
                     else:
                         # 原端口不可用，连接到第一个可用端口
@@ -296,12 +296,12 @@ class ScreenDetector:
                         self.connected = True
                         self.current_port = new_port
                         print(f"\r{Fore.GREEN}连接到新串口: {new_port}" + " " * 30)
-                        
+
                         # 检查设备是否处于启动过程
                         if self.check_device_booting():
                             print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
                             time.sleep(5)  # 等待设备启动完成
-                        
+
                         return True
                 except Exception as e:
                     print(f"\r{Fore.RED}尝试连接失败: {str(e)}" + " " * 30)
@@ -396,10 +396,10 @@ class ScreenDetector:
                 screen_id = empty_match.group(1)
                 if not screen_id:  # 如果值为空
                     print(Fore.YELLOW + "屏幕ID存在但为空!")
-                    print(Fore.MAGENTA + "屏幕ID: [空]")
+                    print("屏幕ID: [空]")
                     return ""  # 返回空字符串表示ID存在但为空
                 else:
-                    print(Fore.MAGENTA + f"屏幕ID: {screen_id}")
+                    print(f"屏幕ID: {screen_id}")
                     return screen_id
 
             # 未找到deviceId配置项
@@ -422,10 +422,10 @@ class ScreenDetector:
                 version = empty_match.group(1)
                 if not version:  # 如果值为空
                     print(Fore.YELLOW + "版本号存在但为空!")
-                    print(Fore.BLUE + "软件版本: [空]")
+                    print("软件版本: [空]")
                     return ""  # 返回空字符串表示版本号存在但为空
                 else:
-                    print(Fore.BLUE + f"软件版本: {version}")
+                    print(f"软件版本: {version}")
                     return version
             return None
         except Exception as e:
