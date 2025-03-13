@@ -23,6 +23,7 @@ class ScreenDetector:
         self.check_screenId = False
         self.check_version = True
         self.check_location = True
+        self.has_disconnected = False
 
     def list_serial_ports(self):
         """列出所有可用的串口设备"""
@@ -88,26 +89,55 @@ class ScreenDetector:
             print(Fore.RED + f"检查设备启动状态时出错: {str(e)}")
             return False
 
-    def send_command(self, command, wait_time=1.0):
+    def judge_uboot_and_exit(self):
+        self.ser.reset_input_buffer()
+        self.ser.reset_output_buffer()
+        prompt = 'SigmaStar'
+        pattern = re.compile(prompt)
+        try:
+            self.ser.write(b'\r\n')
+            time.sleep(0.5)
+            max_attempts = 3
+            for _ in range(max_attempts):
+                # 读取一行数据
+                line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                if line:
+                    # 检查是否匹配 U-Boot 提示符
+                    if pattern.search(line):
+                        # 退出 U-Boot 界面
+                        self.ser.write(b'reset\r\n')
+                        time.sleep(7)
+                        return True
+                # 如果没有数据，发送回车符重试
+                self.ser.write(b'\r\n')
+                time.sleep(0.1)
+
+            return False
+        except Exception:
+            return False
+
+    def send_command(self, command, wait_time=0.3):
         """发送命令到串口并获取响应"""
         if not self.connected or not self.ser:
             print(Fore.RED + "无法发送命令: 未连接到设备，请检查设备是否连接")
+            self.judge_uboot_and_exit()
             return None
 
         try:
             # 先检查设备是否连接
             if not self.check_device_connection():
                 print(Fore.RED + "设备已断开，无法发送命令")
+                self.has_disconnected = True
                 return None
-
             # 检查设备是否处于启动过程
-            if self.check_device_booting():
-                print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
-                time.sleep(5)  # 等待设备启动完成
-                print(Fore.GREEN + "继续执行操作")
+            if self.has_disconnected:
+                if self.check_device_booting():
+                    print(Fore.YELLOW + "检测到设备正在启动，等待5秒...")
+                    time.sleep(5)  # 等待设备启动完成
+                    print(Fore.GREEN + "继续执行操作")
 
             # 完全清空缓冲区，等待一段时间确保当前所有输出都被读取并丢弃
-            time.sleep(0.5)  # 等待可能的输出
+            # time.sleep(0.3)  # 等待可能的输出
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
             time.sleep(0.2)  # 再次等待确保缓冲区真的空了
@@ -128,18 +158,22 @@ class ScreenDetector:
             response = b''
             start_time = time.time()
             max_wait_time = 2.0  # 等待最多2秒
-
             while (time.time() - start_time) < max_wait_time:
                 try:
                     if self.ser.in_waiting > 0:
                         chunk = self.ser.read(self.ser.in_waiting)
                         response += chunk
+                        if 'SigmaStar' in response.decode('utf-8', errors='ignore'):
+                            self.ser.write(b'reset\r\n')
+                            time.sleep(7)
                         # 如果已经找到了我们要的信息，可以提前结束
                         if command.startswith("cat "):
                             decoded = response.decode('utf-8', errors='replace')
                             if command.endswith("screenId.ini") and "deviceId=" in decoded:
                                 break
-                            if command.endswith("version.ini") and "sversion=" in decoded:
+                            if command.endswith("version.ini") and "version=" in decoded:
+                                break
+                            if command.endswith("local.ini") and "local=" in decoded:
                                 break
                 except Exception as e:
                     print(Fore.RED + f"读取响应时出错: {str(e)}")
@@ -154,6 +188,7 @@ class ScreenDetector:
                 return decoded
             else:
                 print(Fore.RED + "设备串口接触不良，请检查后重新插入，若重新插入还不行请重启设备")
+                self.judge_uboot_and_exit()
                 return None
         except Exception as e:
             print(Fore.RED + f"发送命令出错: {str(e)}")
@@ -193,33 +228,6 @@ class ScreenDetector:
 
         print(Fore.RED + "设备未就绪，无法通信")
         return False
-
-    def get_version(self):
-        """获取软件版本号"""
-        try:
-            # 读取版本配置文件
-            print(Fore.CYAN + "正在读取软件版本号...")
-            response = self.send_command("cat software/version.ini")
-
-            if not response:
-                print(Fore.RED + "未收到设备响应")
-                return None
-
-            # 使用精确的正则表达式匹配sversion
-            match = re.search(r'sversion=([0-9.]+)', response)
-            if match:
-                version = match.group(1)
-                print(Fore.GREEN + "获取版本号成功!")
-                print(Fore.BLUE + f"软件版本号: {version}")
-                return version
-            else:
-                # 如果没找到匹配，输出部分响应以便调试
-                print(Fore.RED + "版本号格式不正确或未找到")
-                # 过滤掉日志信息，只显示可能包含版本的行
-                return None
-        except Exception as e:
-            print(Fore.RED + f"获取版本号时出错: {str(e)}")
-            return None
 
     def check_file_exists(self, filepath):
         """检查文件是否存在"""
@@ -428,9 +436,12 @@ class ScreenDetector:
             response = self.send_command(f"cat {path}")
             if not response:
                 return None
-
-            # 首先检查是否包含sversion配置项，即使值为空
-            empty_match = re.search(r'sversion\s*=\s*(\S*)', response)
+            # 首先检查是否包含version配置项，即使值为空
+            empty_match = re.search(r'version\s*=\s*(\S*)', response)
+            if 'SigmaStar' in response:
+                self.ser.write(b'reset\r\n')
+                time.sleep(7)
+                return None
             if empty_match:
                 version = empty_match.group(1)
                 if not version:  # 如果值为空
