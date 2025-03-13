@@ -19,6 +19,10 @@ class ScreenDetector:
         self.current_port = None
         print(Fore.CYAN + "欢迎使用屏幕ID和版本号检测工具")
         print(Fore.CYAN + "=" * 50)
+        """设置检测选项"""
+        self.check_screenId = False
+        self.check_version = True
+        self.check_location = True
 
     def list_serial_ports(self):
         """列出所有可用的串口设备"""
@@ -206,7 +210,7 @@ class ScreenDetector:
             if match:
                 version = match.group(1)
                 print(Fore.GREEN + "获取版本号成功!")
-                print(Fore.BLUE + f"软件版本: {version}")
+                print(Fore.BLUE + f"软件版本号: {version}")
                 return version
             else:
                 # 如果没找到匹配，输出部分响应以便调试
@@ -315,47 +319,52 @@ class ScreenDetector:
             print(Fore.RED + "未连接到设备")
             # 尝试等待设备连接
             if not self.wait_for_device_reconnect(self.current_port):
-                return None, None
+                return None, None, None
 
         # 等待用户确认继续
         input(Fore.RED + "按回车键开始读取设备信息...")
         print(Fore.CYAN + "正在读取设备信息，请耐心等待...")
-
         # 在读取前再次检查设备连接状态
         if not self.check_device_connection():
             print(Fore.RED + "设备已断开，等待重新连接...")
             # 等待设备重新连接
             if not self.wait_for_device_reconnect(self.current_port):
-                return None, None
+                return None, None, None
             print(Fore.GREEN + "设备已重新连接，继续读取设备信息...")
 
-        # 以下是原有的设备检测代码
         # 尝试检查文件是否存在
         screen_id_path = "/customer/screenId.ini"
         version_path = "/software/version.ini"
+        location_path = "/software/local.ini"
 
-        # 验证文件路径
-        if not self.check_file_exists(screen_id_path):
-            # 尝试其他可能的路径
-            for path in ["/data/customer/screenId.ini", "/etc/screenId.ini"]:
-                if self.check_file_exists(path):
-                    screen_id_path = path
-                    break
+        # start_time = time.time()
 
-        if not self.check_file_exists(version_path):
-            # 尝试其他可能的路径
-            for path in ["/software/version.ini", "/etc/version.ini"]:
-                if self.check_file_exists(path):
-                    version_path = path
-                    break
+        # # 验证文件路径
+        # if not self.check_file_exists(screen_id_path):
+        #     # 尝试其他可能的路径
+        #     for path in ["/data/customer/screenId.ini", "/etc/screenId.ini"]:
+        #         if self.check_file_exists(path):
+        #             screen_id_path = path
+        #             break
+        #
+        # if not self.check_file_exists(version_path):
+        #     # 尝试其他可能的路径
+        #     for path in ["/software/version.ini", "/etc/version.ini"]:
+        #         if self.check_file_exists(path):
+        #             version_path = path
+        #             break
+        #
+        # end_time = time.time()
+        # print(f"检查文件耗时: {end_time - start_time: .2f} 秒")
 
         # 持续尝试读取，直到成功或用户中断
         max_attempts = 50  # 最大尝试次数
         attempt = 0
-        screen_id = None
-        version = None
+        screen_id = None if self.check_screenId else True
+        version = None if self.check_version else True
+        location = None if self.check_location else True
 
-        while (screen_id is None or version is None) and attempt < max_attempts:
+        while (screen_id is None or version is None or location is None) and attempt < max_attempts:
             attempt += 1
 
             # 获取屏幕ID
@@ -366,11 +375,14 @@ class ScreenDetector:
             if version is None:
                 version = self.get_version_from_path(version_path)
 
+            # 获取位置
+            if location is None:
+                location = self.get_location_from_path(location_path)
+
             # 判断是否已获取到信息
-            if screen_id is not None and version is not None:
+            if screen_id is not None and version is not None and location is not None:
                 print(Fore.GREEN + "设备信息读取完成!")
                 break
-
             # 继续尝试
             if attempt < max_attempts:
                 time.sleep(0.5)  # 等待1秒再次尝试
@@ -380,9 +392,10 @@ class ScreenDetector:
             print(Fore.RED + "无法获取屏幕ID，已达到最大尝试次数")
         if version is None:
             print(Fore.RED + "无法获取版本号，已达到最大尝试次数")
-
+        if location is None:
+            print(Fore.RED + "无法获取位置，已达到最大尝试次数")
         # 返回结果，注意空字符串("")表示值为空但配置项存在
-        return screen_id, version
+        return screen_id, version, location
 
     def get_screen_id_from_path(self, path):
         """从指定路径获取屏幕ID"""
@@ -425,11 +438,39 @@ class ScreenDetector:
                     print("软件版本: [空]")
                     return ""  # 返回空字符串表示版本号存在但为空
                 else:
-                    print(f"软件版本: {version}")
+                    print(f"软件版本号: {version}")
                     return version
             return None
         except Exception as e:
             print(Fore.RED + f"从路径 {path} 获取版本号时出错: {str(e)}")
+            return None
+
+    def get_location_from_path(self, path):
+        try:
+            response = self.send_command(f"cat {path}")
+            if not response:
+                return None
+
+            # 首先检查是否包含location配置项，即使值为空
+            empty_match = re.search(r'local\s*=\s*(\S*)', response)
+            if empty_match:
+                location = empty_match.group(1)
+                if not location:  # 如果值为空
+                    print(Fore.YELLOW + "位置存在但为空!")
+                    print("版本: [空]")
+                    return ""  # 返回空字符串表示位置存在但为空
+                else:
+                    if location == '2':
+                        location = '海外版本'
+                    elif location == '1':
+                        location = '国内版本'
+                    else:
+                        location = '未知'
+                    print(f"版本: {location}")
+                    return location
+            return None
+        except Exception as e:
+            print(Fore.RED + f"未能获取到设备的海内外版本配置: {str(e)}")
             return None
 
     def run(self):
