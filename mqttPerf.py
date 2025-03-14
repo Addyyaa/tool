@@ -6,6 +6,7 @@ import logging
 import json
 import argparse
 import psutil
+import requests
 import pandas as pd
 import os
 from datetime import datetime
@@ -21,6 +22,12 @@ receive_msg_lock = threading.RLock()
 publish_msg_lock = threading.RLock()
 connection_stats_lock = threading.RLock()
 message_tracking_lock = threading.RLock()  # 添加消息跟踪锁
+api = 'api/v1/screenMedia/sync/device/info'
+token = 'eyJhbGciOiJIUzI1NiJ9' \
+        '.eyJhY2NvdW50SWQiOjYsImFjY291bnQiOiLlpI_lk7IiLCJsb2dpblR5cGUiOjMsInVzZXJUeXBlIjoxLCJpYXQiOjE3NDA5NjY3OTMsIm5iZiI6MTc0MDk2Njc5MywiZXhwIjoxNzQzNTU4NzkzfQ.OK6GINR6GyynzKsem6Fz_PBq5HQh_1b2gT0gEmNmOCk'
+port = 8082
+server = '139.224.192.36'
+protocol = 'http'
 
 
 # 获取客户端ID的辅助函数 (放在类之外，文件开头的导入语句之后)
@@ -32,6 +39,28 @@ def get_client_id(client):
         return client._client_id.decode('utf-8') if isinstance(client._client_id, bytes) else client._client_id
     else:
         return "unknown"
+
+
+def regist_device(client_id):
+    url = protocol + '://' + server + ':' + str(port) + '/' + api
+    headers = {
+        "Content-Type": "application/json",
+        "X-Token": token
+    }
+    data = {
+        "deviceType": 1,
+        "direction": 1,
+        "format": "1920*1200",
+        "ip": "127.0.0.1",
+        "remainingStorage": 512000,
+        "screenId": client_id,
+        "totalStorage": 512000,
+        "usedStorage": 0,
+        "version": "1.0.0.115",
+    }
+    response = requests.post(url=url, headers=headers, data=json.dumps(data))
+    print(response.text)
+    return response
 
 
 class MQTTLoadTester:
@@ -131,11 +160,11 @@ class MQTTLoadTester:
             "port": 1883,
             "username": "mqtttest",
             "password": "mqtttest2022",
-            "num_subscribers": 1,
-            "num_publishers": 1,
-            "num_heartbeats": 3,
+            "num_subscribers": 200,
+            "num_publishers": 200,
+            "num_heartbeats": 1000,
             "qos_level": 1,
-            "test_duration": 10,
+            "test_duration": 1800,
             "publish_interval": 1,
             "heartbeat_interval": 5,
             "pub_topics": ["/screen/magicframe/cloud/downloadpicture[-flat]/mf50"],
@@ -221,7 +250,7 @@ class MQTTLoadTester:
         try:
             # 创建客户端 - 使用MQTTv5
             client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv5)
-
+            regist_device(client_id)
             # 创建用户数据
             userdata = {
                 'client_id': client_id,
@@ -593,7 +622,7 @@ class MQTTLoadTester:
             print(f"发布者 {client_id} 开始发布消息到主题: {topic}")
 
             # 确保消息能被订阅者接收 - 设置较小的发布间隔
-            real_interval = min(interval, 1.0)  # 最大1秒
+            real_interval = min(interval, 60)  # 最大1秒
 
             while self.running:
                 try:
@@ -707,66 +736,6 @@ class MQTTLoadTester:
                 time.sleep(1)
         except Exception as e:
             self.logger.error(f"生成性能报告时出错: {e}")
-
-    # def start_mqtt_clients(self):
-    #     """启动MQTT客户端"""
-    #     # 使用线程池管理
-    #     executor = ThreadPoolExecutor(max_workers=min(200, self.connections_count + 10))
-    #
-    #     try:
-    #         # 启动资源监控
-    #         monitor_thread = threading.Thread(target=self.monitor_resources)
-    #         monitor_thread.daemon = True
-    #         monitor_thread.start()
-    #
-    #         # 启动性能报告线程
-    #         report_thread = threading.Thread(target=self.periodic_report)
-    #         report_thread.daemon = True
-    #         report_thread.start()
-    #
-    #         # 启动订阅客户端
-    #         for i in range(self.config["num_subscribers"]):
-    #             client_id = f"conn_subscriber_{i + 1}"
-    #             client = self.create_mqtt_client(client_id, subscribe=True)
-    #             self.connect_client(client, subscribe=True)
-    #             self.subscribers.append(client)
-    #
-    #         # 启动发布客户端
-    #         for i in range(self.config["num_publishers"]):
-    #             client_id = f"conn_publisher_{i + 1}"
-    #             pub_topic = f"conn_subscriber_{i + 1}" + self.config["pub_topics"][0]
-    #             client = self.create_mqtt_client(client_id)
-    #             self.connect_client(client)
-    #             future = executor.submit(self.publish_messages, client, pub_topic, self.config["publish_interval"])
-    #             self.publishers.append((client, future))
-    #
-    #         # 启动心跳报文发布客户端
-    #         heartbeat_executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.config.get("num_heartbeats", 5))
-    #         for i in range(self.config["num_heartbeats"]):
-    #             client_id = f"pad_conn_heartbeat_{i + 1}"
-    #             pub_topic = self.config["pub_topics"][0] + f"conn_heartbeat_{i + 1}"
-    #             client = self.create_mqtt_client(client_id)
-    #             self.connect_client(client)
-    #             future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config["heartbeat_interval", f"客户端：{client_id}{self.config['heartbeat_msg']}"])
-    #             self.heartbeats.append((client, future))
-    #
-    #         # 保持主线程活跃
-    #         while True:
-    #             time.sleep(1)
-    #
-    #     except KeyboardInterrupt:
-    #         self.logger.info("收到中断信号，正在终止测试...")
-    #         self.running = False
-    #         self.generate_final_report()
-    #         self.generate_excel_report()  # 生成Excel报告
-    #         self.cleanup()
-    #         executor.shutdown(wait=False)
-    #     except Exception as e:
-    #         self.logger.error(f"测试过程中发生错误: {e}")
-    #         self.running = False
-    #         self.generate_excel_report()  # 生成Excel报告
-    #         self.cleanup()
-    #         executor.shutdown(wait=False)
 
     def cleanup(self):
         """清理资源，关闭所有客户端连接"""
@@ -1489,7 +1458,7 @@ class MQTTLoadTester:
             # 创建订阅者
             self.logger.info(f"创建 {self.config['num_subscribers']} 个订阅者...")
             for i in range(self.config['num_subscribers']):
-                client_id = f"pad_test_subscriber_{i+1}"
+                client_id = f"pad_test_subscriber_{i + 1}"
                 client = self.create_mqtt_client(client_id, subscribe=True)
                 if client:
                     self.subscribers.append(client)
@@ -1514,7 +1483,7 @@ class MQTTLoadTester:
             publish_threads = []
 
             for i in range(self.config['num_publishers']):
-                client_id = f"conn_publisher_{i+1}"
+                client_id = f"conn_publisher_{i + 1}"
                 client = self.create_mqtt_client(client_id)
 
                 if client:
