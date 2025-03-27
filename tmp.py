@@ -1,94 +1,85 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import re
-import os
+import vlc
+import threading
+import time
 
-# 创建主窗口
-root = tk.Tk()
-root.title("文件内容提取器")
-root.geometry("400x300")
+class VideoPlayerApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("多视频播放器")
+        self.root.geometry("400x300")
 
-# 全局变量，用于存储文件路径和保存目录
-file_path = ""
-save_dir = ""
+        # 存储选择的视频路径
+        self.video_paths = []
+        # 存储 VLC 播放实例
+        self.players = []
 
-# 提取下载链接的函数
-def extract_links(text):
-    # 使用正则表达式匹配 http 或 https 开头的链接
-    link_pattern = r'https?://[^\s"]+'
-    links = re.findall(link_pattern, text)
-    return links
+        # GUI 组件
+        self.label = tk.Label(root, text="选择多个视频文件后点击开始播放")
+        self.label.pack(pady=10)
 
-# 选择文件的函数
-def choose_file():
-    global file_path
-    file_path = filedialog.askopenfilename(
-        title="选择文件",
-        filetypes=(("文本文件", "*.txt *.ini"), ("所有文件", "*.*"))
-    )
-    if file_path:
-        file_label.config(text=f"已选择文件: {os.path.basename(file_path)}")
-    else:
-        file_label.config(text="未选择文件")
+        self.select_button = tk.Button(root, text="选择视频", command=self.select_videos)
+        self.select_button.pack(pady=5)
 
-# 选择保存目录的函数
-def choose_save_dir():
-    global save_dir
-    save_dir = filedialog.askdirectory(title="选择保存目录")
-    if save_dir:
-        dir_label.config(text=f"保存目录: {save_dir}")
-    else:
-        dir_label.config(text="未选择保存目录")
+        self.video_listbox = tk.Listbox(root, height=10, width=50)
+        self.video_listbox.pack(pady=10)
 
-# 处理文件并保存结果的函数
-def process_file():
-    if not file_path:
-        messagebox.showerror("错误", "请先选择一个文件！")
-        return
-    if not save_dir:
-        messagebox.showerror("错误", "请先选择保存目录！")
-        return
+        self.play_button = tk.Button(root, text="开始播放", command=self.start_playback, state="disabled")
+        self.play_button.pack(pady=5)
 
-    try:
-        # 读取文件内容
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    def select_videos(self):
+        # 打开文件对话框，支持多选
+        files = filedialog.askopenfilenames(
+            title="选择视频文件",
+            filetypes=[("视频文件", "*.mp4 *.avi *.mkv *.mov *.wmv")]
+        )
+        if files:
+            self.video_paths = list(files)
+            self.video_listbox.delete(0, tk.END)  # 清空列表
+            for path in self.video_paths:
+                self.video_listbox.insert(tk.END, path.split('/')[-1])  # 只显示文件名
+            self.play_button.config(state="normal")  # 启用播放按钮
+        else:
+            messagebox.showwarning("警告", "未选择任何视频文件！")
 
-        # 提取链接
-        links = extract_links(content)
+    def play_video(self, path):
+        # 为每个视频创建一个 VLC 实例并播放
+        instance = vlc.Instance()
+        player = instance.media_player_new()
+        media = instance.media_new(path)
+        player.set_media(media)
+        player.play()
+        self.players.append(player)  # 保存播放器实例
 
-        # 保存结果到文件
-        output_file = os.path.join(save_dir, "extracted_links.txt")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            if links:
-                f.write("提取到的下载链接:\n")
-                for link in links:
-                    f.write(f"{link}\n")
-            else:
-                f.write("未找到任何下载链接。\n")
+        # 等待播放结束（可选）
+        while player.is_playing():
+            time.sleep(1)
 
-        messagebox.showinfo("成功", f"结果已保存到: {output_file}")
-    except Exception as e:
-        messagebox.showerror("错误", f"处理失败: {str(e)}")
+    def start_playback(self):
+        if not self.video_paths:
+            messagebox.showerror("错误", "请先选择视频文件！")
+            return
 
-# UI 布局
-# 文件选择部分
-file_label = tk.Label(root, text="未选择文件", wraplength=350)
-file_label.pack(pady=10)
+        # 清空之前的播放器实例
+        self.players = []
 
-file_button = tk.Button(root, text="选择文件", command=choose_file)
-file_button.pack(pady=5)
+        # 为每个视频启动一个线程播放
+        for path in self.video_paths:
+            thread = threading.Thread(target=self.play_video, args=(path,))
+            thread.daemon = True  # 设置为守护线程，随主程序关闭
+            thread.start()
 
-# 保存目录选择部分
-dir_label = tk.Label(root, text="未选择保存目录", wraplength=350)
-dir_label.pack(pady=10)
+        messagebox.showinfo("提示", f"正在播放 {len(self.video_paths)} 个视频")
 
-dir_button = tk.Button(root, text="选择保存目录", command=choose_save_dir)
-dir_button.pack(pady=5)
+    def on_closing(self):
+        # 关闭时停止所有播放
+        for player in self.players:
+            player.stop()
+        self.root.destroy()
 
-# 处理按钮
-process_button = tk.Button(root, text="提取链接并保存", command=process_file)
-process_button.pack(pady=20)
-
-# 运行主循环
-root.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = VideoPlayerApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)  # 处理窗口关闭
+    root.mainloop()

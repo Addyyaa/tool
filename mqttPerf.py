@@ -193,7 +193,7 @@ class MQTTLoadTester:
             "resource_monitor_interval": 5,
             "log_file": None,
             "keep_alive": 60,  # 添加keep_alive参数
-            "heartbeat_msg": "{\"content\": \"这是mqtt测试心跳消息\", \"timestamp\": \"1715145600000\"}"
+            "heartbeat_msg": "{\"content\": \"这是mqtt测试心跳消息\"}",
         }
 
         if config_file and os.path.exists(config_file):
@@ -417,6 +417,8 @@ class MQTTLoadTester:
         if reason_code != 0 and self.running:
             self.logger.warning(f"客户端 {client_id} 意外断开，尝试重连...")
             try:
+                with open('reconnect_record.txt', 'a') as f:
+                    f.write(f"客户端 {client_id} 意外断开，尝试重连...\n")
                 client.reconnect()
                 with connection_stats_lock:
                     self.reconnections += 1
@@ -1513,7 +1515,7 @@ class MQTTLoadTester:
                 client = self.create_mqtt_client(client_id)
                 self.connect_client(client)
                 future = heartbeat_executor.submit(self.publish_messages, client, pub_topic, self.config[
-                    "heartbeat_interval"], "心跳报文", f"设备：{client_id}：{self.config['heartbeat_msg']}")
+                    "heartbeat_interval"], "心跳报文", f"设备：{client_id}：{self.config['heartbeat_msg']}\ttime：{time.asctime()}")
                 self.heartbeats.append((client, future))
 
             # 等待测试完成

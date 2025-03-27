@@ -7,7 +7,7 @@ from tkinter.filedialog import askdirectory
 
 
 # 生成随机分辨率，确保不重复
-def generate_resolutions(count, min_res=100, max_res=8000):
+def generate_resolutions(count, min_res=100, max_res=80000):
     resolutions = set()
     while len(resolutions) < count:
         width = random.randint(min_res, max_res)
