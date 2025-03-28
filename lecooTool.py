@@ -7,11 +7,37 @@ import pandas as pd
 import tkinter as tk
 from tkinter import filedialog
 import datetime
+from typing import Iterator, Tuple, Iterable, Hashable
 
 token = None
 df_row = 0
 counter = 0
 txt_name = None
+factory_code = 'LecooTN'
+sn_key = '装箱条码'
+motherboard_key = '主板'
+inverter_board_key = '逆变板'
+wireless_network_card_key = '无线网卡'
+memory_key = "内存"
+hard_disk_key = "硬盘"
+lcd_key = 'LCD'
+lcd_screen_cable_key = 'LCD屏线'
+lcd_back_cover_key = 'LCD后盖'
+adapt_key = "适配器"
+power_cable_key = "电源线"
+batch_number_key = "批次号"
+host_production_time_key = "主机生产日期"
+factory_type_key = "工厂类型"
+factory_name_key = "工厂名称"
+ship_date_key = "购机日期"
+sale_region_key = "销售区域"
+shop_key = "店铺"
+uwip_barcode_key = "主机条码"
+# 如果缺少信息的字段使用下面的内容
+loss_tip = "data_missing_temporarily"
+no_factory_name_key = "LecooTN"
+no_factory_type_key = "ODM"
+null_info = ""
 
 
 def get_token():
@@ -60,7 +86,7 @@ def open_file():
     return file_path
 
 
-def read_data_from_excel():
+def read_data_from_excel() -> Iterable[Tuple[Hashable, pd.Series]]:
     try:
         file_path = open_file()
         df = pd.read_excel(file_path)
@@ -139,14 +165,22 @@ def send_data_to_lecoo(excel_data, access_token):
                 "QTY": "数量",  # 固定值1
                 "PO": "",  # DOA无的话填NA值
                 "ADD_DEL_FLAG": "A",  # 必填 写死 A
-                "SHELL_IND": "-"  # 必填 固定值 -
+                # "SHELL_IND": "-"  # 必填 固定值 -
             }
         ]
     }
     pass
 
 
-def tbl_Machine_Sequence(rows):
+def extract_specific_cell_from_series(row: Tuple[int, pd.Series], key: str):
+    header = row[1].index
+    for i in header:
+        if key == i:
+            return row[1].get(i)
+    return None
+
+
+def tbl_Machine_Sequence(params_rows: Iterable[Tuple[Hashable, pd.Series]]):
     api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
     global token
     header = {
@@ -155,35 +189,59 @@ def tbl_Machine_Sequence(rows):
     body = {
         "header": {
             "TRL": df_row,
-            "PLANT": "LecooTN",
+            "PLANT": factory_code,
             "TXT_NAME": txt_name if txt_name else generate_timestamp(),
             "TXT_NUM": "",
             "TXT_SOURCE": "PRC"
         },
         "Data": [
             {
-                "Machine_No": "主机",
-                "MATERIAL_NO": "",
-                "PACKING_LOT_NO": "",
-                "START_DATE": "",
-                "Flag_Linked": "1",
+                "Machine_No": None,
+                "MATERIAL_NO": None,
+                "PACKING_LOT_NO": None,
+                "START_DATE": None,
+                "Flag_Linked": "",
                 "Check_Code": "",
                 "VF_NAME": "",
-                "PLANT": "",
-                "SITE_TYPE": "",
-                "UWIP_SN": "",
-                "SHIP_DATE": "",
-                "SALE_REGION": "",
-                "SHOP": "",
-                "UWIP_BARCODE": "",
-                "ADD_DEL_FLAG": "A"  # D为删除
+                "PLANT": None,
+                "SITE_TYPE": None,
+                "UWIP_SN": None,
+                "SHIP_DATE": None,
+                "SALE_REGION": None,
+                "SHOP": None,
+                "UWIP_BARCODE": None,
+                "ADD_DEL_FLAG": "A",  # D为删除
+                "SHELL_IND": ""
             }
         ]
     }
-    for _ in rows:
-        print(type(_), _)
-        # body["Data"][0]["Machine_No"] = _[0]
-        break
+    # 将所有行上传到接口
+    for row in params_rows:
+        if "set body":
+            sn = extract_specific_cell_from_series(row, sn_key)
+            body["Data"][0]["Machine_No"] = sn
+            body["Data"][0]["MATERIAL_NO"] = sn[: 9]
+            batch_no = extract_specific_cell_from_series(row, batch_number_key)
+            body["Data"][0]["PACKING_LOT_NO"] = batch_no if batch_no else loss_tip
+            produce_date = extract_specific_cell_from_series(row, host_production_time_key)
+            body["Data"][0]["START_DATE"] = produce_date if produce_date else loss_tip
+            factory_name = extract_specific_cell_from_series(row, factory_name_key)
+            body["Data"][0]["PLANT"] = factory_name if factory_name else no_factory_name_key
+            factory_type = extract_specific_cell_from_series(row, factory_type_key)
+            body["Data"][0]["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
+            body["Data"][0]["UWIP_SN"] = sn
+            ship_date = extract_specific_cell_from_series(row, ship_date_key)
+            body["Data"][0]["SHIP_DATE"] = ship_date if ship_date else null_info
+            sale_region = extract_specific_cell_from_series(row, sale_region_key)
+            body["Data"][0]["SALE_REGION"] = sale_region if sale_region else null_info
+            shop = extract_specific_cell_from_series(row, shop_key)
+            body["Data"][0]["SHOP"] = shop if shop else null_info
+            uwip_barcode = extract_specific_cell_from_series(row, uwip_barcode_key)
+            body["Data"][0]["UWIP_BARCODE"] = uwip_barcode if uwip_barcode else null_info
+
+        response = requests.post(api, json=body, headers=header)
+        print(body)
+        print(response.text)
 
 
 def tbl_Packing_Machine_Material():
@@ -208,6 +266,7 @@ def get_daily_counter():
         f.write(f"{current_date},{counter}")
 
 
-# read_data_from_excel()
+get_token()
 rows = read_data_from_excel()
+print(type(rows))
 tbl_Machine_Sequence(rows)
