@@ -1,14 +1,12 @@
 import logging
 import os
 import sys
-import time
 import requests
 import base64
 import pandas as pd
-import tkinter as tk
 from tkinter import filedialog
 import datetime
-from typing import Iterator, Tuple, Iterable, Hashable
+from typing import Tuple, Iterable, Hashable
 import tkinter as tk
 from tkinter import Toplevel
 
@@ -49,9 +47,19 @@ null_info = ""
 progress_bar = 0
 
 
+# 自定义一个异常类用于token失效是抛出
+class TokenExpired(Exception):
+    """自定义异常类"""
+
+    def __init__(self, message="token失效"):
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        return f'Error: {self.message}'
+
+
 # 异常处理
-
-
 def handle_200(response):
     global progress_bar
     progress_bar += 1
@@ -70,7 +78,8 @@ def handle_400(response):
 
 
 def handle_401(response):
-    print("token失效，重新获取")
+    global token
+    raise TokenExpired
 
 
 def handle_500(response):
@@ -157,6 +166,7 @@ def get_token():
         token1 = s['access_token']
         global token
         token = token1
+        # token = '67566699-e23a-326e-8739-29dde2515239'  # 用于调试token过期的场景
         return token1
     else:
         return False
@@ -338,13 +348,18 @@ def tbl_Machine_Sequence(params_rows: Iterable[Tuple[Hashable, pd.Series]]):
             body["Data"][0]["SHOP"] = shop if shop else null_info
             uwip_barcode = extract_specific_cell_from_series(row, uwip_barcode_key)
             body["Data"][0]["UWIP_BARCODE"] = uwip_barcode if uwip_barcode else null_info
-        print(body)
         try:
             response = requests.post(api, json=body, headers=header)
             status_code_handlers.get(response.status_code, handle_default)(response)
             print(response.text)
+        except TokenExpired as e:
+            logging.info(f"codeNum-343：Token过期，错误信息：{e}")
+            # 重新请求接口
+            response = requests.post(api, json=body, headers=header)
+            print(f"重新获取请求token后的请求结果：{response.text}")
         except Exception as e:
             logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
+        print(body)
 
 
 def tbl_Packing_Machine_Material():
