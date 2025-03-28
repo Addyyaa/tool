@@ -14,6 +14,7 @@ from tkinter import Toplevel
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s [in %(filename)s:%(lineno)d]',
                     datefmt='%Y-%m-%d %H:%M:%S')
+batach_size = 4
 
 token = None
 df_row = 0
@@ -305,50 +306,70 @@ def tbl_Machine_Sequence(params_rows: Iterable[Tuple[Hashable, pd.Series]]):
             "TXT_NUM": "",
             "TXT_SOURCE": "PRC"
         },
-        "Data": [
-            {
-                "Machine_No": None,
-                "MATERIAL_NO": None,
-                "PACKING_LOT_NO": None,
-                "START_DATE": None,
-                "Flag_Linked": "",
-                "Check_Code": "",
-                "VF_NAME": "",
-                "PLANT": None,
-                "SITE_TYPE": None,
-                "UWIP_SN": None,
-                "SHIP_DATE": None,
-                "SALE_REGION": None,
-                "SHOP": None,
-                "UWIP_BARCODE": None,
-                "ADD_DEL_FLAG": "A",  # D为删除
-                "SHELL_IND": ""
-            }
-        ]
+        "Data": []
     }
+    data_list_for_count = []
     # 将所有行上传到接口
     for row in params_rows:
-        if "set body":
+        body_item = {
+            "Machine_No": None,
+            "MATERIAL_NO": None,
+            "PACKING_LOT_NO": None,
+            "START_DATE": None,
+            "Flag_Linked": "",
+            "Check_Code": "",
+            "VF_NAME": "",
+            "PLANT": None,
+            "SITE_TYPE": None,
+            "UWIP_SN": None,
+            "SHIP_DATE": None,
+            "SALE_REGION": None,
+            "SHOP": None,
+            "UWIP_BARCODE": None,
+            "ADD_DEL_FLAG": "A",  # D为删除
+            "SHELL_IND": ""
+        }
+        if "set body_item":
             sn = extract_specific_cell_from_series(row, sn_key)
-            body["Data"][0]["Machine_No"] = sn
-            body["Data"][0]["MATERIAL_NO"] = sn[: 9]
+            body_item["Machine_No"] = sn
+            body_item["MATERIAL_NO"] = sn[: 9]
             batch_no = extract_specific_cell_from_series(row, batch_number_key)
-            body["Data"][0]["PACKING_LOT_NO"] = batch_no if batch_no else loss_tip
+            body_item["PACKING_LOT_NO"] = batch_no if batch_no else loss_tip
             produce_date = extract_specific_cell_from_series(row, host_production_time_key)
-            body["Data"][0]["START_DATE"] = produce_date if produce_date else loss_tip
+            body_item["START_DATE"] = produce_date if produce_date else loss_tip
             factory_name = extract_specific_cell_from_series(row, factory_name_key)
-            body["Data"][0]["PLANT"] = factory_name if factory_name else no_factory_name_key
+            body_item["PLANT"] = factory_name if factory_name else no_factory_name_key
             factory_type = extract_specific_cell_from_series(row, factory_type_key)
-            body["Data"][0]["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
-            body["Data"][0]["UWIP_SN"] = sn
+            body_item["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
+            body_item["UWIP_SN"] = sn
             ship_date = extract_specific_cell_from_series(row, ship_date_key)
-            body["Data"][0]["SHIP_DATE"] = ship_date if ship_date else null_info
+            body_item["SHIP_DATE"] = ship_date if ship_date else null_info
             sale_region = extract_specific_cell_from_series(row, sale_region_key)
-            body["Data"][0]["SALE_REGION"] = sale_region if sale_region else null_info
+            body_item["SALE_REGION"] = sale_region if sale_region else null_info
             shop = extract_specific_cell_from_series(row, shop_key)
-            body["Data"][0]["SHOP"] = shop if shop else null_info
+            body_item["SHOP"] = shop if shop else null_info
             uwip_barcode = extract_specific_cell_from_series(row, uwip_barcode_key)
-            body["Data"][0]["UWIP_BARCODE"] = uwip_barcode if uwip_barcode else null_info
+            body_item["UWIP_BARCODE"] = uwip_barcode if uwip_barcode else null_info
+
+        data_list_for_count.append(body_item)
+        if len(data_list_for_count) >= batach_size:
+            body["Data"] = data_list_for_count
+            try:
+                response = requests.post(api, json=body, headers=header)
+                status_code_handlers.get(response.status_code, handle_default)(response)
+                print(body)
+                print(response.text)
+            except TokenExpired as e:
+                logging.info(f"codeNum-343：Token过期，错误信息：{e}")
+                # 重新请求接口
+                response = requests.post(api, json=body, headers=header)
+                print(f"重新获取请求token后的请求结果：{response.text}")
+            except Exception as e:
+                logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
+            data_list_for_count = []
+    #  循环结束后将剩余的部分（即不满足一批的）继续发送
+    if data_list_for_count:
+        body["Data"] = data_list_for_count
         try:
             response = requests.post(api, json=body, headers=header)
             status_code_handlers.get(response.status_code, handle_default)(response)
