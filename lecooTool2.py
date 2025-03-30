@@ -80,6 +80,7 @@ def handle_400(response):
 
 def handle_401(response):
     global token
+    token = get_token()
     raise TokenExpired
 
 
