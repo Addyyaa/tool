@@ -9,6 +9,7 @@ import datetime
 from typing import Tuple, Iterable, Hashable
 import tkinter as tk
 from tkinter import Toplevel
+from requests.exceptions import ConnectionError, Timeout, HTTPError
 
 # 配置日志记录器
 logging.basicConfig(level=logging.INFO,
@@ -358,6 +359,12 @@ def tbl_Machine_Sequence(params_rows: Iterable[Tuple[Hashable, pd.Series]]):
             # 重新请求接口
             response = requests.post(api, json=body, headers=header)
             print(f"重新获取请求token后的请求结果：{response.text}")
+        except ConnectionError:
+            show_popup("无法连接服务器，请检查网络连接")
+        except Timeout:
+            show_popup("请求超时，请重试")
+        except HTTPError as e:
+            show_popup(f"HTTP错误发生: {e}")
         except Exception as e:
             logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
         print(body)
