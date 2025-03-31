@@ -6,10 +6,11 @@ import base64
 import pandas as pd
 from tkinter import filedialog
 import datetime
-from typing import Tuple, Iterable, Hashable
+from typing import Tuple, Hashable
 import tkinter as tk
 from tkinter import Toplevel
 from requests.exceptions import ConnectionError, Timeout, HTTPError
+import json
 
 # 配置日志记录器
 logging.basicConfig(level=logging.INFO,
@@ -83,7 +84,9 @@ def handle_400(response):
 
 
 def handle_401(response):
+    print(f"重新获取token")
     get_token()
+    print(f"新的token： {token}")
     raise TokenExpired
 
 
@@ -177,6 +180,13 @@ def get_token():
         return False
 
 
+def get_header():
+    header = {
+        "Authorization": f"Bearer {token}",
+    }
+    return header
+
+
 def generate_timestamp():
     get_daily_counter()
     global counter
@@ -212,78 +222,9 @@ def read_data_from_excel(sheet_name=0) -> pd.DataFrame:
         sys.exit(0)
 
 
-def send_data_to_lecoo(excel_data, access_token):
-    api1 = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-    header = {
-        "Authorization": f"Bearer {access_token}",
-    }
-    body = {
-        "header": {
-            "TRL": "1",
-            "PLANT": "LecooTN",
-            "TXT_NAME": "",
-            "TXT_NUM": "",
-            "TXT_SOURCE": ""
-        },
-        "Data": [
-            {
-                "Machine_No": "主机",
-                "MATERIAL_NO": excel_data[0],
-                "PACKING_LOT_NO": excel_data[1],
-                "START_DATE": excel_data[2],
-                "Flag_Linked": "1",
-                "Check_Code": "",
-                "VF_NAME": "",
-                "PLANT": "",
-                "SITE_TYPE": "",
-                "UWIP_SN": "",
-                "SHIP_DATE": "",
-                "SALE_REGION": "",
-                "SHOP": "",
-                "UWIP_BARCODE": "",
-                "ADD_DEL_FLAG": "A"  # D为删除
-            }
-        ]
-    }
-
-    payload = {
-        "header": {
-            "TRL": "400",  # 必填 行数总量
-            "PLANT": "LecooTN",  # 必填 工厂代码
-            "TXT_NAME": "",  # 必填 文件名
-            "TXT_NUM": "",  # ROW Header 空值
-            "TXT_SOURCE": ""  # 必填 PRC
-        },
-        "Data": [
-            {
-                "MACHINE_NO": "主机号",  # 必填 MACH_SER
-                "MATERIAL_BARCODE_PRE": "",  # 传空值
-                "AUTO_ID": "",  # 传空值
-                "MATERIAL_BARCODE": "部件条码--部件的条形码",  # 必填 PART_SER
-                "CREATE_DATE_TIME": "创建时间--时分秒格式",  # 必填 BUILD_DATE
-                "MATERIAL_NO": "部件编码--部件条形码的CODE",  # 必填 PART_NBR
-                "VF_NAME": "",  # 传空值
-                "MATERIAL_CLASS_CODE": "部件类别代码",  # MATERIAL_CLASS_CODE
-                "PLANT_CODE": "",  # ibase数据上传文件名中的plant code
-                "CS_FILE_TYPE": "",  # 传空值
-                "SITE_TYPE": "工厂类型--该主机的所属工厂分类",  # 必填 INHOUSE / ODM
-                "MTMSN": "",  # 传空值
-                "PACKING_LOT_NO": "批次号",  # 有的话必填，没有为空
-                "MODEL": "产品编码（MTM）",  # 必填 PRODUCT_ID
-                "PRINTED_DESC": "",  # 物料描述，同装箱单一致，没有传空值
-                "PRODUCT_DATE": "生产日期-年月日格式",  # Product_Date
-                "SCAN_DATE": "出库日期--时分秒格式",  # Scan_Date
-                "LUCKY_NO": "",  # 可为空
-                "SALEORDER": "销售单号",  # DOA无的话填NA值
-                "COUNTRY": "国家--CODE",  # DOA无的话填NA值
-                "QTY": "数量",  # 固定值1
-                "PO": "",  # DOA无的话填NA值
-                "ADD_DEL_FLAG": "A",  # 必填 写死 A
-                # "SHELL_IND": "-"  # 必填 固定值 -
-            }
-        ]
-    }
-    pass
+def send_data_to_lecoo(excel_data):
+    tbl_Machine_Sequence(excel_data)
+    tbl_Packing_Machine_Material(excel_data)
 
 
 def extract_specific_cell_from_series(row: Tuple[Hashable, pd.Series], key: str):
@@ -297,10 +238,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
     params_rows = df1.iterrows()
     """主机信息上传方法"""
     api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-    global token
-    header = {
-        "Authorization": f"Bearer {token}",
-    }
+
     body = {
         "header": {
             "TRL": df_row,
@@ -357,46 +295,12 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
         data_list_for_count.append(body_item)
         if len(data_list_for_count) >= batach_size:
             body["Data"] = data_list_for_count
-            try:
-                response = requests.post(api, json=body, headers=header)
-                status_code_handlers.get(response.status_code, handle_default)(response)
-                print(body)
-                print(response.text)
-            except TokenExpired as e:
-                logging.info(f"codeNum-343：Token过期，错误信息：{e}")
-                # 重新请求接口
-                response = requests.post(api, json=body, headers=header)
-                print(f"重新获取请求token后的请求结果：{response.text}")
-            except ConnectionError:
-                show_popup("无法连接服务器，请检查网络连接")
-            except Timeout:
-                show_popup("请求超时，请重试")
-            except HTTPError as e:
-                show_popup(f"HTTP错误发生: {e}")
-            except Exception as e:
-                logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
+            request_handler(api, body)
             data_list_for_count = []
     #  循环结束后将剩余的部分（即不满足一批的）继续发送
     if data_list_for_count:
         body["Data"] = data_list_for_count
-        try:
-            response = requests.post(api, json=body, headers=header)
-            status_code_handlers.get(response.status_code, handle_default)(response)
-            print(response.text)
-        except TokenExpired as e:
-            logging.info(f"codeNum-343：Token过期，错误信息：{e}")
-            # 重新请求接口
-            response = requests.post(api, json=body, headers=header)
-            print(f"重新获取请求token后的请求结果：{response.text}")
-        except ConnectionError:
-            show_popup("无法连接服务器，请检查网络连接")
-        except Timeout:
-            show_popup("请求超时，请重试")
-        except HTTPError as e:
-            show_popup(f"HTTP错误发生: {e}")
-        except Exception as e:
-            logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
-        print(body)
+        request_handler(api, body)
 
 
 def tbl_Packing_Machine_Material(df: pd.DataFrame):
@@ -426,7 +330,6 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
         },
         "Data": []
     }
-    data_list_for_count = []
     # 将所有行上传到接口
     for row in params_rows:
         body_item = {
@@ -445,7 +348,7 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
             "PACKING_LOT_NO": None,  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "MODEL": None,
             "PRINTED_DESC": "",
-            "PRODUCT_DATE": None,   # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
+            "PRODUCT_DATE": None,  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "SCAN_DATE": None,  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "LUCKY_NO": "",
             "SALEORDER": "NA",
@@ -474,57 +377,36 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
                     body_item['MATERIAL_NO'] = loss_tip
 
                 # 获取部件条码
-                compent_value = row[1].loc[_]
-                compent_value = compent_value if pd.notna(compent_value) else loss_tip
-                body_item['MATERIAL_BARCODE'] = compent_value
+                component = row[1].loc[_]
+                component = component if pd.notna(component) else loss_tip
+                body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
+                # body['Data'].append(body_item) # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
+                body['Data'].append(body_item.copy())
 
-                print(body_item)
-           # TODO 此处开始调试，需要发送部件信息请求, 部件的分批与主机不同，需要将所有部件一次性加到body里面的列表后一次发送请求
-            sys.exit()
+            request_handler(api, body)
+            body["Data"] = []
 
-        data_list_for_count.append(body_item)
-        if len(data_list_for_count) >= batach_size:
-            body["Data"] = data_list_for_count
-            try:
-                response = requests.post(api, json=body, headers=header)
-                status_code_handlers.get(response.status_code, handle_default)(response)
-                print(body)
-                print(response.text)
-            except TokenExpired as e:
-                logging.info(f"codeNum-343：Token过期，错误信息：{e}")
-                # 重新请求接口
-                response = requests.post(api, json=body, headers=header)
-                print(f"重新获取请求token后的请求结果：{response.text}")
-            except ConnectionError:
-                show_popup("无法连接服务器，请检查网络连接")
-            except Timeout:
-                show_popup("请求超时，请重试")
-            except HTTPError as e:
-                show_popup(f"HTTP错误发生: {e}")
-            except Exception as e:
-                logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
-            data_list_for_count = []
-    #  循环结束后将剩余的部分（即不满足一批的）继续发送
-    if data_list_for_count:
-        body["Data"] = data_list_for_count
-        try:
-            response = requests.post(api, json=body, headers=header)
-            status_code_handlers.get(response.status_code, handle_default)(response)
-            print(response.text)
-        except TokenExpired as e:
-            logging.info(f"codeNum-343：Token过期，错误信息：{e}")
-            # 重新请求接口
-            response = requests.post(api, json=body, headers=header)
-            print(f"重新获取请求token后的请求结果：{response.text}")
-        except ConnectionError:
-            show_popup("无法连接服务器，请检查网络连接")
-        except Timeout:
-            show_popup("请求超时，请重试")
-        except HTTPError as e:
-            show_popup(f"HTTP错误发生: {e}")
-        except Exception as e:
-            logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
-        print(body)
+
+def request_handler(api, body):
+    try:
+        header = get_header()
+        response = requests.post(api, json=body, headers=header)
+        status_code_handlers.get(response.status_code, handle_default)(response)
+        print(response.text)
+    except TokenExpired as e:
+        header = get_header()
+        logging.info(f"codeNum-343：Token过期，错误信息：{e}")
+        # 重新请求接口
+        response = requests.post(api, json=body, headers=header)
+        print(f"重新获取请求token后的请求结果：{response.text}")
+    except ConnectionError:
+        show_popup("无法连接服务器，请检查网络连接")
+    except Timeout:
+        show_popup("请求超时，请重试")
+    except HTTPError as e:
+        show_popup(f"HTTP错误发生: {e}")
+    except Exception as e:
+        logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
 
 
 def get_daily_counter():
@@ -534,6 +416,7 @@ def get_daily_counter():
     global counter
     current_date = datetime.date.today().strftime("%Y%m%d")
     filename = "resource/tmp/counter.txt"
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     if not os.path.exists(filename):
         counter = 1
     else:
@@ -548,7 +431,6 @@ def get_daily_counter():
         f.write(f"{current_date},{counter}")
 
 
-# get_token()
+get_token()
 df = read_data_from_excel()
-# tbl_Machine_Sequence(rows)
-tbl_Packing_Machine_Material(df)
+send_data_to_lecoo(df)
