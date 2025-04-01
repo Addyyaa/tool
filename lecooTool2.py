@@ -1,23 +1,23 @@
 import logging
+import math
 import os
 import sys
 import time
 import requests
 import base64
 import pandas as pd
-from tkinter import filedialog, ttk
+from tkinter import filedialog
 import datetime
-from typing import Tuple, Hashable
+from typing import Tuple, Hashable, Optional
 import tkinter as tk
-from tkinter import Toplevel
+from tkinter import Toplevel, ttk
 from requests.exceptions import ConnectionError, Timeout, HTTPError
-import json
 
 # 配置日志记录器
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s [in %(filename)s:%(lineno)d]',
                     datefmt='%Y-%m-%d %H:%M:%S')
-batach_size = 50
+batch_size = 50
 file_path = None
 pn_table_index_key = '8码'
 pn_table_product_name = '27 一体机 '
@@ -53,6 +53,9 @@ no_factory_type_key = "ODM"
 null_info = ""
 progress_bar = 0
 total_request_count = 0
+progress_window: tk.Tk | None = None
+progress_label: Optional[tk.Label] = None
+progress_bar_widget: Optional[ttk.Progressbar] = None
 
 
 # 自定义一个异常类用于token失效是抛出
@@ -67,10 +70,116 @@ class TokenExpired(Exception):
         return f'Error: {self.message}'
 
 
+# 创建进度窗口
+def create_progress_window():
+    global progress_window, progress_label, progress_bar_widget
+    
+    # 先检查是否已有窗口存在
+    if progress_window is not None:
+        try:
+            if hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
+                progress_window.destroy()
+        except (tk.TclError, RuntimeError):
+            pass  # 忽略错误，窗口可能已经被销毁
+    
+    try:
+        progress_window = tk.Tk()
+        progress_window.title("处理进度")
+        progress_window.geometry("300x100")
+        progress_window.resizable(False, False)
+        
+        # 添加窗口关闭处理器
+        def on_window_close():
+            global progress_window, progress_label, progress_bar_widget
+            progress_window = None
+            progress_label = None
+            progress_bar_widget = None
+            
+        progress_window.protocol("WM_DELETE_WINDOW", on_window_close)
+        
+        progress_label = tk.Label(progress_window, text=f"处理进度: 0/{total_request_count}")
+        progress_label.pack(pady=10)
+        
+        progress_bar_widget = ttk.Progressbar(progress_window, length=200, mode='determinate')
+        progress_bar_widget.pack(pady=10)
+        progress_bar_widget['value'] = 0
+        
+        # 确保窗口保持在最前面
+        progress_window.attributes('-topmost', True)
+        
+        return progress_window
+    except Exception as e:
+        logging.error(f"创建进度窗口时出错: {e}")
+        return None
+
+
+# 更新进度窗口
+def update_progress_window():
+    global progress_bar, total_request_count, progress_label, progress_bar_widget, progress_window
+    
+    # 检查窗口和组件是否存在
+    if progress_window is None:
+        return
+        
+    try:
+        # 确保窗口仍然存在
+        if not hasattr(progress_window, 'winfo_exists') or not progress_window.winfo_exists():
+            progress_window = None
+            progress_label = None
+            progress_bar_widget = None
+            return
+            
+        if progress_label is None or progress_bar_widget is None:
+            return
+            
+        progress_percentage = (progress_bar / total_request_count) * 100 if total_request_count > 0 else 0
+        progress_label.config(text=f"进度: {progress_bar}/{total_request_count}")
+        progress_bar_widget['value'] = progress_percentage
+        
+        # 安全地更新窗口
+        try:
+            progress_window.update()
+        except tk.TclError:
+            # 窗口可能已被销毁
+            progress_window = None
+            progress_label = None 
+            progress_bar_widget = None
+            return
+            
+        # 如果进度完成，显示完成消息
+        if progress_bar >= total_request_count and progress_window is not None:
+            progress_label.config(text="处理完成！")
+            # 使用安全的方式延迟关闭窗口
+            try:
+                progress_window.after(2000, lambda: safe_destroy_window())
+            except tk.TclError:
+                pass
+    except Exception as e:
+        # 处理窗口可能已关闭或无效的情况
+        logging.warning(f"更新进度窗口时出错: {e}")
+        progress_window = None
+        progress_label = None
+        progress_bar_widget = None
+
+
+# 安全地销毁窗口
+def safe_destroy_window():
+    global progress_window
+    if isinstance(progress_window, tk.Tk):
+        try:
+            if progress_window and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
+                progress_window.destroy()
+        except Exception as e:
+            logging.warning(f"关闭进度窗口时出错: {e}")
+        finally:
+            progress_window = None
+
+
 # 异常处理
 def handle_200(response):
     global progress_bar
     progress_bar += 1
+    update_progress_window()  # 更新进度窗口
 
 
 def handle_400(response):
@@ -174,8 +283,8 @@ def show_progress_window(total, current):
     progress_percentage = (current / total) * 100 if total > 0 else 0
 
     # 创建进度条
-    progress_label = tk.Label(root, text=f"进度: {current}/{total}")
-    progress_label.pack(pady=10)
+    progress_label1 = tk.Label(root, text=f"进度: {current}/{total}")
+    progress_label1.pack(pady=10)
 
     progress_bar1 = ttk.Progressbar(root, length=200, mode='determinate')
     progress_bar1.pack(pady=10)
@@ -193,6 +302,7 @@ def show_progress_window(total, current):
 
     # 进入主循环（仅在需要持续显示时使用）
     root.mainloop()
+
 
 def get_token():
     api = 'https://api-cn-t.lenovo.com/uat/token'
@@ -255,14 +365,37 @@ def read_data_from_excel(sheet_name=0) -> pd.DataFrame:
             file_path_excel = open_file()
             file_path = file_path_excel
         df1 = pd.read_excel(file_path, sheet_name=sheet_name)
+        # 计算总请求次数
+        global total_request_count
+        if total_request_count == 0:
+            total_request_count = df1.shape[0] + math.ceil(df1.shape[0] / batch_size)
         return df1
     except FileNotFoundError:
         sys.exit(0)
 
 
 def send_data_to_lecoo(excel_data):
-    tbl_Machine_Sequence(excel_data)
-    tbl_Packing_Machine_Material(excel_data)
+    global progress_window, progress_label, progress_bar_widget, progress_bar
+
+    # 重置进度计数
+    progress_bar = 0
+
+    try:
+        # 创建进度窗口前确保之前的窗口已关闭
+        if progress_window is not None and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
+            progress_window.destroy()
+
+        create_progress_window()  # 创建进度窗口
+        tbl_Machine_Sequence(excel_data)
+        tbl_Packing_Machine_Material(excel_data)
+
+        # 如果所有处理都完成但窗口还存在，手动更新一次
+        update_progress_window()
+    except Exception as e:
+        logging.error(f"处理数据时出错: {e}")
+        # 确保即使发生错误，窗口也会关闭
+        if progress_window is not None and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
+            progress_window.destroy()
 
 
 def extract_specific_cell_from_series(row: Tuple[Hashable, pd.Series], key: str):
@@ -273,9 +406,8 @@ def extract_specific_cell_from_series(row: Tuple[Hashable, pd.Series], key: str)
 
 
 def tbl_Machine_Sequence(df1: pd.DataFrame):
-    global df_row, total_request_count
+    global df_row
     df_row = df1.shape[0]
-    total_request_count = df1.shape[0]
     params_rows = df1.iterrows()
     """主机信息上传方法"""
     api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
@@ -334,7 +466,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             body_item["UWIP_BARCODE"] = uwip_barcode if uwip_barcode else null_info
 
         data_list_for_count.append(body_item)
-        if len(data_list_for_count) >= batach_size:
+        if len(data_list_for_count) >= batch_size:
             body["Data"] = data_list_for_count
             request_handler(api, body)
             data_list_for_count = []
@@ -346,11 +478,11 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
 
 def tbl_Packing_Machine_Material(df: pd.DataFrame):
     params_rows = df.iterrows()
+    global df_row
+    df_row += df.shape[0]
     key_to_remove = ['序号', sn_key, '批次号', '日期']
     keys = list(df.keys())
     keys = list(filter(lambda x: x not in key_to_remove, keys))
-    global total_request_count
-    total_request_count += total_request_count * len(keys)  # 计算总的请求数
     """读取PN表"""
     df1: pd.DataFrame = read_data_from_excel(1)
     cols = list(df1.columns)
@@ -360,9 +492,6 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
     """主机信息上传方法"""
     api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
     global token
-    header = {
-        "Authorization": f"Bearer {token}",
-    }
     body = {
         "header": {
             "TRL": df_row,
@@ -425,7 +554,6 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
                 body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 # body['Data'].append(body_item) # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 body['Data'].append(body_item.copy())
-
             request_handler(api, body)
             body["Data"] = []
 
@@ -434,8 +562,27 @@ def request_handler(api, body):
     try:
         header = get_header()
         response = requests.post(api, json=body, headers=header)
-        status_code_handlers.get(response.status_code, handle_default)(response)
-        print(response.text)
+        
+        # 获取正确的状态码并安全地调用处理函数
+        try:
+            if isinstance(response.json().get("code"), (str, int)):
+                status_code = int(response.json().get("code"))
+                handler = status_code_handlers.get(status_code, handle_default)
+            else:
+                handler = status_code_handlers.get(response.status_code, handle_default)
+                
+            # 安全地调用处理函数
+            try:
+                handler(response)
+            except tk.TclError:
+                # 窗口可能已被销毁，但我们仍然想增加进度计数
+                global progress_bar
+                if handler == handle_200:  # 如果是成功处理函数
+                    progress_bar += 1
+        except Exception as e:
+            logging.warning(f"处理响应时出错: {e}")
+            
+        print(response.text, f'\t{response.status_code}')
     except TokenExpired as e:
         header = get_header()
         logging.info(f"codeNum-343：Token过期，错误信息：{e}")
