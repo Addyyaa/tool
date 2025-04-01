@@ -550,7 +550,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             # 以单元格级别逐个提交接口了，而不是跟主机一样按照行进行提交接口
             for _ in keys:
                 if _ in df1.index:
-                    value = df1.loc[_, pn_table_product_name]
+                    value = df1.loc[_].iloc[0]  # 取消使用列标题定位具体值，使用列的下标,满足不同产品也能使用
                     # 根据索引和列标题定位在表2，定位到对应的pn码
                     body_item['MATERIAL_NO'] = value
                 else:
