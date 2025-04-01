@@ -569,14 +569,21 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
 
 
 def request_handler(api, body):
+    def is_json(response1):
+        try:
+            response1.json()
+            return True
+        except ValueError:
+            return False
+
     try:
         header = get_header()
         response = requests.post(api, json=body, headers=header)
 
         # 获取正确的状态码并安全地调用处理函数
         try:
-            if isinstance(response.json().get("code"), (str, int)):
-                status_code = int(response.json().get("code")) or response.status_code
+            if is_json(response):
+                status_code = int(response.json().get("code"))
                 handler = status_code_handlers.get(status_code, handle_default)
             else:
                 handler = status_code_handlers.get(response.status_code, handle_default)
@@ -590,8 +597,7 @@ def request_handler(api, body):
                 if handler == handle_200:  # 如果是成功处理函数
                     progress_bar += 1
         except Exception as e:
-            logging.warning(f"处理响应时出错: {e}")
-
+            logging.warning(f"处理响应时出错: {e}\t状态码：{response.status_code}\ttxt：{response.text}")
         print(response.text, f'\t{response.status_code}')
     except TokenExpired as e:
         header = get_header()
