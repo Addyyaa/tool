@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import shutil
 import sys
 import time
 import requests
@@ -197,7 +198,7 @@ def handle_400(response):
 
 
 def handle_401(response):
-    print(f"重新获取token")
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}-重新获取token")
     get_token()
     print(f"新的token： {token}")
     raise TokenExpired
@@ -208,8 +209,7 @@ def handle_500(response):
 
 
 def handle_default(response):
-    print(f"未处理的响应状态码：{response.status_code}")
-    print("响应内容：", response.text)
+    logging.error(f"未处理的响应状态码：{response.status_code}\t响应内容：{response.text}")
     return None
 
 
@@ -377,7 +377,8 @@ def read_data_from_excel(sheet_name=0) -> pd.DataFrame:
 
 
 def send_data_to_lecoo(excel_data):
-    global progress_window, progress_label, progress_bar_widget, progress_bar
+    global progress_window, progress_label, progress_bar_widget, progress_bar, txt_name
+    txt_name = generate_timestamp()
     config = get_local_config()
     global planet_code
     option = 'CONFIG'
@@ -396,7 +397,8 @@ def send_data_to_lecoo(excel_data):
         create_progress_window()  # 创建进度窗口
         tbl_Machine_Sequence(excel_data)
         tbl_Packing_Machine_Material(excel_data)
-
+        file_path_tmp= f'resource/tmp'
+        shutil.copy(file_path_tmp,txt_name)
         # 如果所有处理都完成但窗口还存在，手动更新一次
         update_progress_window()
     except Exception as e:
@@ -424,7 +426,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
         "header": {
             "TRL": df_row,
             "PLANT": factory_code,
-            "TXT_NAME": txt_name if txt_name else generate_timestamp(),
+            "TXT_NAME": txt_name,
             "TXT_NUM": "",
             "TXT_SOURCE": "PRC"
         },
@@ -504,7 +506,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
         "header": {
             "TRL": df_row,
             "PLANT": factory_code,
-            "TXT_NAME": txt_name if txt_name else generate_timestamp(),
+            "TXT_NAME": txt_name,
             "TXT_NUM": "",
             "TXT_SOURCE": "PRC"
         },
@@ -574,7 +576,7 @@ def request_handler(api, body):
         # 获取正确的状态码并安全地调用处理函数
         try:
             if isinstance(response.json().get("code"), (str, int)):
-                status_code = int(response.json().get("code"))
+                status_code = int(response.json().get("code")) or response.status_code
                 handler = status_code_handlers.get(status_code, handle_default)
             else:
                 handler = status_code_handlers.get(response.status_code, handle_default)
@@ -596,7 +598,7 @@ def request_handler(api, body):
         logging.info(f"codeNum-343：Token过期，错误信息：{e}")
         # 重新请求接口
         response = requests.post(api, json=body, headers=header)
-        print(f"重新获取请求token后的请求结果：{response.text}")
+        logging.info(f"重新获取请求token后的请求结果：{response.text}")
     except ConnectionError:
         show_popup("无法连接服务器，请检查网络连接")
     except Timeout:
