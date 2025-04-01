@@ -1,10 +1,11 @@
 import logging
 import os
 import sys
+import time
 import requests
 import base64
 import pandas as pd
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 import datetime
 from typing import Tuple, Hashable
 import tkinter as tk
@@ -16,7 +17,7 @@ import json
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s [in %(filename)s:%(lineno)d]',
                     datefmt='%Y-%m-%d %H:%M:%S')
-batach_size = 4
+batach_size = 50
 file_path = None
 pn_table_index_key = '8码'
 pn_table_product_name = '27 一体机 '
@@ -51,6 +52,7 @@ no_factory_name_key = "LecooTN"
 no_factory_type_key = "ODM"
 null_info = ""
 progress_bar = 0
+total_request_count = 0
 
 
 # 自定义一个异常类用于token失效是抛出
@@ -154,6 +156,44 @@ def show_popup(message: str):
     root.mainloop()
 
 
+def show_progress_window(total, current):
+    """
+    弹出进度窗口，显示当前处理进度。
+
+    参数：
+    total (int): 总数量
+    current (int): 当前已处理的数量
+    """
+    # 创建主窗口
+    root = tk.Tk()
+    root.title("处理进度")
+    root.geometry("300x100")  # 设置窗口大小
+    root.resizable(False, False)  # 禁止调整窗口大小
+
+    # 计算进度百分比
+    progress_percentage = (current / total) * 100 if total > 0 else 0
+
+    # 创建进度条
+    progress_label = tk.Label(root, text=f"进度: {current}/{total}")
+    progress_label.pack(pady=10)
+
+    progress_bar1 = ttk.Progressbar(root, length=200, mode='determinate')
+    progress_bar1.pack(pady=10)
+    progress_bar1['value'] = progress_percentage
+
+    # 刷新窗口以显示进度
+    root.update()
+
+    # 如果进度未完成，保持窗口打开（这里可以根据需要调整）
+    if current < total:
+        root.after(100, lambda: root.destroy())  # 100ms 后关闭窗口（模拟刷新效果）
+    else:
+        time.sleep(1)  # 完成后显示 1 秒后关闭
+        root.destroy()
+
+    # 进入主循环（仅在需要持续显示时使用）
+    root.mainloop()
+
 def get_token():
     api = 'https://api-cn-t.lenovo.com/uat/token'
     consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
@@ -214,10 +254,8 @@ def read_data_from_excel(sheet_name=0) -> pd.DataFrame:
         if not file_path:
             file_path_excel = open_file()
             file_path = file_path_excel
-        df = pd.read_excel(file_path, sheet_name=sheet_name)
-        global df_row
-        df_row = df.shape[0]
-        return df
+        df1 = pd.read_excel(file_path, sheet_name=sheet_name)
+        return df1
     except FileNotFoundError:
         sys.exit(0)
 
@@ -235,6 +273,9 @@ def extract_specific_cell_from_series(row: Tuple[Hashable, pd.Series], key: str)
 
 
 def tbl_Machine_Sequence(df1: pd.DataFrame):
+    global df_row, total_request_count
+    df_row = df1.shape[0]
+    total_request_count = df1.shape[0]
     params_rows = df1.iterrows()
     """主机信息上传方法"""
     api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
@@ -308,6 +349,8 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
     key_to_remove = ['序号', sn_key, '批次号', '日期']
     keys = list(df.keys())
     keys = list(filter(lambda x: x not in key_to_remove, keys))
+    global total_request_count
+    total_request_count += total_request_count * len(keys)  # 计算总的请求数
     """读取PN表"""
     df1: pd.DataFrame = read_data_from_excel(1)
     cols = list(df1.columns)
@@ -377,7 +420,7 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
                     body_item['MATERIAL_NO'] = loss_tip
 
                 # 获取部件条码
-                component = row[1].loc[_]
+                component = extract_specific_cell_from_series(row, _)
                 component = component if pd.notna(component) else loss_tip
                 body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 # body['Data'].append(body_item) # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
@@ -406,7 +449,7 @@ def request_handler(api, body):
     except HTTPError as e:
         show_popup(f"HTTP错误发生: {e}")
     except Exception as e:
-        logging.error(f"codeNum-342：接口请求失败，错误信息：{e}")
+        logging.error(f"接口请求失败，错误信息：{e}")
 
 
 def get_daily_counter():
