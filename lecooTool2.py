@@ -199,8 +199,8 @@ def handle_400(response):
 
 def handle_401(response):
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}-重新获取token")
-    get_token()
-    print(f"新的token： {token}")
+    t = get_token()
+    print(f"新的token： {token}\t{t}")
     raise TokenExpired
 
 
@@ -401,7 +401,7 @@ def send_data_to_lecoo(excel_data):
         new_name = file_path_tmp + (txt_name + '.xlsx')
         print(file_path_tmp, new_name)
         if file_path is not None and new_name is not None:
-            shutil.copy(file_path, new_name)
+            shutil.copy(str(file_path), str(new_name))
         update_progress_window()
     except Exception as e:
         logging.error(f"处理数据时出错: {e}")
@@ -593,6 +593,12 @@ def request_handler(api, body):
             # 安全地调用处理函数
             try:
                 handler(response)
+            except TokenExpired as e:
+                header = get_header()
+                logging.info(f"codeNum-343：Token过期，错误信息：{e}")
+                # 重新请求接口
+                response = requests.post(api, json=body, headers=header)
+                logging.info(f"重新获取请求token后的请求结果：{response.text}")
             except tk.TclError:
                 # 窗口可能已被销毁，但我们仍然想增加进度计数
                 global progress_bar
@@ -601,12 +607,6 @@ def request_handler(api, body):
         except Exception as e:
             logging.warning(f"处理响应时出错: {e}\t状态码：{response.status_code}\ttxt：{response.text}")
         print(response.text, f'\t{response.status_code}')
-    except TokenExpired as e:
-        header = get_header()
-        logging.info(f"codeNum-343：Token过期，错误信息：{e}")
-        # 重新请求接口
-        response = requests.post(api, json=body, headers=header)
-        logging.info(f"重新获取请求token后的请求结果：{response.text}")
     except ConnectionError:
         show_popup("无法连接服务器，请检查网络连接")
     except Timeout:
@@ -663,6 +663,6 @@ def get_local_config():
     return config
 
 
-get_token()
+# get_token()
 df = read_data_from_excel()
 send_data_to_lecoo(df)
