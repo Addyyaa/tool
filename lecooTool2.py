@@ -393,13 +393,15 @@ def send_data_to_lecoo(excel_data):
         # 创建进度窗口前确保之前的窗口已关闭
         if progress_window is not None and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
             progress_window.destroy()
-
         create_progress_window()  # 创建进度窗口
         tbl_Machine_Sequence(excel_data)
         tbl_Packing_Machine_Material(excel_data)
-        file_path_tmp= f'resource/tmp'
-        shutil.copy(file_path_tmp,txt_name)
         # 如果所有处理都完成但窗口还存在，手动更新一次
+        file_path_tmp = f'resource/tmp/'
+        new_name = file_path_tmp + (txt_name + '.xlsx')
+        print(file_path_tmp, new_name)
+        if file_path is not None and new_name is not None:
+            shutil.copy(file_path, new_name)
         update_progress_window()
     except Exception as e:
         logging.error(f"处理数据时出错: {e}")
