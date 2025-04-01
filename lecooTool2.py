@@ -6,6 +6,7 @@ import time
 import requests
 import base64
 import pandas as pd
+import configparser
 from tkinter import filedialog
 import datetime
 from typing import Tuple, Hashable, Optional
@@ -46,6 +47,7 @@ sale_region_key = "销售区域"
 shop_key = "店铺"
 uwip_barcode_key = "主机条码"
 produce_date_key = "生产日期"
+planet_code = ""
 # 如果缺少信息的字段使用下面的内容
 loss_tip = "data_missing_temporarily"
 no_factory_name_key = "LecooTN"
@@ -73,7 +75,7 @@ class TokenExpired(Exception):
 # 创建进度窗口
 def create_progress_window():
     global progress_window, progress_label, progress_bar_widget
-    
+
     # 先检查是否已有窗口存在
     if progress_window is not None:
         try:
@@ -81,32 +83,32 @@ def create_progress_window():
                 progress_window.destroy()
         except (tk.TclError, RuntimeError):
             pass  # 忽略错误，窗口可能已经被销毁
-    
+
     try:
         progress_window = tk.Tk()
         progress_window.title("处理进度")
         progress_window.geometry("300x100")
         progress_window.resizable(False, False)
-        
+
         # 添加窗口关闭处理器
         def on_window_close():
             global progress_window, progress_label, progress_bar_widget
             progress_window = None
             progress_label = None
             progress_bar_widget = None
-            
+
         progress_window.protocol("WM_DELETE_WINDOW", on_window_close)
-        
+
         progress_label = tk.Label(progress_window, text=f"处理进度: 0/{total_request_count}")
         progress_label.pack(pady=10)
-        
+
         progress_bar_widget = ttk.Progressbar(progress_window, length=200, mode='determinate')
         progress_bar_widget.pack(pady=10)
         progress_bar_widget['value'] = 0
-        
+
         # 确保窗口保持在最前面
         progress_window.attributes('-topmost', True)
-        
+
         return progress_window
     except Exception as e:
         logging.error(f"创建进度窗口时出错: {e}")
@@ -116,11 +118,11 @@ def create_progress_window():
 # 更新进度窗口
 def update_progress_window():
     global progress_bar, total_request_count, progress_label, progress_bar_widget, progress_window
-    
+
     # 检查窗口和组件是否存在
     if progress_window is None:
         return
-        
+
     try:
         # 确保窗口仍然存在
         if not hasattr(progress_window, 'winfo_exists') or not progress_window.winfo_exists():
@@ -128,24 +130,24 @@ def update_progress_window():
             progress_label = None
             progress_bar_widget = None
             return
-            
+
         if progress_label is None or progress_bar_widget is None:
             return
-            
+
         progress_percentage = (progress_bar / total_request_count) * 100 if total_request_count > 0 else 0
         progress_label.config(text=f"进度: {progress_bar}/{total_request_count}")
         progress_bar_widget['value'] = progress_percentage
-        
+
         # 安全地更新窗口
         try:
             progress_window.update()
         except tk.TclError:
             # 窗口可能已被销毁
             progress_window = None
-            progress_label = None 
+            progress_label = None
             progress_bar_widget = None
             return
-            
+
         # 如果进度完成，显示完成消息
         if progress_bar >= total_request_count and progress_window is not None:
             progress_label.config(text="处理完成！")
@@ -350,12 +352,12 @@ def open_file():
     root = tk.Tk()
     root.attributes('-topmost', True)
     root.withdraw()
-    file_path = filedialog.askopenfilename(
+    file_path1 = filedialog.askopenfilename(
         title="请选择表格文件",
         filetypes=[("Excel Files", "*.xlsx;*.xls")]
     )
     root.destroy()
-    return file_path
+    return file_path1
 
 
 def read_data_from_excel(sheet_name=0) -> pd.DataFrame:
@@ -376,6 +378,12 @@ def read_data_from_excel(sheet_name=0) -> pd.DataFrame:
 
 def send_data_to_lecoo(excel_data):
     global progress_window, progress_label, progress_bar_widget, progress_bar
+    config = get_local_config()
+    global planet_code
+    option = 'CONFIG'
+    manufacturer = config.get(option, 'odm厂商')
+    producer = config.get(option, '生产工厂代码')
+    planet_code = manufacturer + '-' + producer
 
     # 重置进度计数
     progress_bar = 0
@@ -476,12 +484,12 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
         request_handler(api, body)
 
 
-def tbl_Packing_Machine_Material(df: pd.DataFrame):
-    params_rows = df.iterrows()
+def tbl_Packing_Machine_Material(df1: pd.DataFrame):
+    params_rows = df1.iterrows()
     global df_row
-    df_row += df.shape[0]
+    df_row += df1.shape[0]
     key_to_remove = ['序号', sn_key, '批次号', '日期']
-    keys = list(df.keys())
+    keys = list(df1.keys())
     keys = list(filter(lambda x: x not in key_to_remove, keys))
     """读取PN表"""
     df1: pd.DataFrame = read_data_from_excel(1)
@@ -513,7 +521,7 @@ def tbl_Packing_Machine_Material(df: pd.DataFrame):
             "MATERIAL_NO": None,
             "VF_NAME": "",
             "MATERIAL_CLASS_CODE": None,  # TODO 工厂提供的表格上没有该条数据，需要对接工厂，应该是一个单独的表上获取的
-            "PLANT_CODE": "",  # TODO 客户未说明该字段， 需要对接
+            "PLANT_CODE": planet_code,
             "CS_FILE_TYPE": "",
             "SITE_TYPE": None,
             "MTMSN": "",
@@ -562,7 +570,7 @@ def request_handler(api, body):
     try:
         header = get_header()
         response = requests.post(api, json=body, headers=header)
-        
+
         # 获取正确的状态码并安全地调用处理函数
         try:
             if isinstance(response.json().get("code"), (str, int)):
@@ -570,7 +578,7 @@ def request_handler(api, body):
                 handler = status_code_handlers.get(status_code, handle_default)
             else:
                 handler = status_code_handlers.get(response.status_code, handle_default)
-                
+
             # 安全地调用处理函数
             try:
                 handler(response)
@@ -581,7 +589,7 @@ def request_handler(api, body):
                     progress_bar += 1
         except Exception as e:
             logging.warning(f"处理响应时出错: {e}")
-            
+
         print(response.text, f'\t{response.status_code}')
     except TokenExpired as e:
         header = get_header()
@@ -619,6 +627,30 @@ def get_daily_counter():
 
     with open(filename, 'w') as f:
         f.write(f"{current_date},{counter}")
+
+
+def get_local_config():
+    config = configparser.ConfigParser()
+    if os.path.exists("config.ini"):
+        config.read("config.ini")
+        if not config.sections() or not config.has_section('CONFIG') or not config.options('CONFIG'):
+            config['CONFIG'] = {
+                '生产工厂代码': '',
+                '每批处理数量': '',
+                'ODM厂商': 'OST'
+            }
+            with open('config.ini', 'w') as configfile:
+                config.write(configfile)
+    else:
+        logging.info("未找到配置文件，开始创建配置文件")
+        config['CONFIG'] = {
+            '生产工厂代码': '',
+            '每批处理数量': '',
+            'ODM厂商': 'OST'
+        }
+        with open('config.ini', 'w') as configfile:
+            config.write(configfile)
+    return config
 
 
 get_token()
