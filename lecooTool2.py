@@ -14,6 +14,8 @@ from typing import Tuple, Hashable, Optional
 import tkinter as tk
 from tkinter import Toplevel, ttk
 from requests.exceptions import ConnectionError, Timeout, HTTPError
+from datetime import timedelta
+import re
 
 # 配置日志记录器
 logging.basicConfig(level=logging.INFO,
@@ -348,6 +350,67 @@ def generate_timestamp():
     return datastr + '{:05d}'.format(counter)
 
 
+def extract_specific_cell_from_series(row: Tuple[Hashable, pd.Series], key: str):
+    value = row[1].get(key, None)
+    if isinstance(value, pd.Timestamp):
+        value = value.strftime('%Y-%m-%d %H:%M:%S')
+    return None if pd.isna(value) else value  # 判断是否为空
+
+
+def convert_cycle_to_production_date(weeks: str) -> str:
+    """
+    从编码字符串中解析日期。编码中可能包含多个 'A'，我们需要找到第一个前面是数字的 'A'，
+    然后从这个 'A' 后面提取年份（1位）和周数（2位），并计算该周的最后一天（周日）。
+
+    参数:
+        weeks (str): 输入的编码字符串，例如 '870028177A4480161' 或 '123A456A789'
+
+    返回:
+        str: 日期字符串，例如 '2024-11-24'
+
+    异常:
+        ValueError: 如果未找到前面是数字的 'A' 或周数无效
+    """
+    # 使用正则表达式找到第一个前面是数字的 'A'
+    match = re.search(r'\dA', weeks)
+    if not match:
+        raise ValueError("未找到前面是数字的 'A'")
+
+    # 获取 'A' 的位置
+    a_index = match.start() + 1  # +1 因为 match.start() 是 'A' 前数字的位置
+
+    # 提取年份（A 后的第一个数字）
+    year_digit = int(weeks[a_index + 1])
+    current_year = datetime.datetime.now().year
+    current_year = int(str(current_year)[:3]) * 10
+    year = current_year + year_digit  # 假设年份为 20XX，例如 4 -> 2024
+
+    # 提取周数（A 后第 2-3 位）
+    week = int(weeks[a_index + 2:a_index + 4])
+
+    # 校验周数是否有效（1-53）
+    if week < 1 or week > 53:
+        raise ValueError(f"周数 {week} 无效，必须在 1-53 之间")
+
+    # 获取该年的第一天
+    first_day = datetime.datetime(year, 1, 1)
+
+    # 计算该年的第一周的周一（ISO 周从周一开始）
+    first_day_weekday = first_day.isoweekday()  # 1=周一, 7=周日
+    if first_day_weekday <= 4:  # 如果 1 月 1 日是周一到周四，属于第 1 周
+        first_monday = first_day - timedelta(days=(first_day_weekday - 1))
+    else:  # 如果是周五到周日，属于下一年的第 1 周
+        first_monday = first_day + timedelta(days=(8 - first_day_weekday))
+
+    # 计算第 N 周的周一（第 week 周的开始）
+    target_monday = first_monday + timedelta(weeks=(week - 1))
+
+    # 计算该周的最后一天（周日）
+    last_day = target_monday + timedelta(days=6)
+
+    # 返回格式化的日期字符串
+    return last_day.strftime('%Y-%m-%d')
+
 def open_file():
     root = tk.Tk()
     root.attributes('-topmost', True)
@@ -410,11 +473,6 @@ def send_data_to_lecoo(excel_data):
             progress_window.destroy()
 
 
-def extract_specific_cell_from_series(row: Tuple[Hashable, pd.Series], key: str):
-    value = row[1].get(key, None)
-    if isinstance(value, pd.Timestamp):
-        value = value.strftime('%Y-%m-%d %H:%M:%S')
-    return None if pd.isna(value) else value  # 判断是否为空
 
 
 def tbl_Machine_Sequence(df1: pd.DataFrame):
@@ -461,7 +519,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             body_item["MATERIAL_NO"] = sn[: 9]
             batch_no = extract_specific_cell_from_series(row, batch_number_key)
             body_item["PACKING_LOT_NO"] = batch_no if batch_no else loss_tip
-            produce_date = extract_specific_cell_from_series(row, host_production_time_key)
+            produce_date = convert_cycle_to_production_date(sn)
             body_item["START_DATE"] = produce_date if produce_date else loss_tip
             factory_name = extract_specific_cell_from_series(row, factory_name_key)
             body_item["PLANT"] = factory_name if factory_name else no_factory_name_key
@@ -476,8 +534,8 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             body_item["SHOP"] = shop if shop else null_info
             uwip_barcode = extract_specific_cell_from_series(row, uwip_barcode_key)
             body_item["UWIP_BARCODE"] = uwip_barcode if uwip_barcode else null_info
-
         data_list_for_count.append(body_item)
+
         if len(data_list_for_count) >= batch_size:
             body["Data"] = data_list_for_count
             request_handler(api, body)
@@ -496,11 +554,11 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
     keys = list(df1.keys())
     keys = list(filter(lambda x: x not in key_to_remove, keys))
     """读取PN表"""
-    df1: pd.DataFrame = read_data_from_excel(1)
-    cols = list(df1.columns)
+    df2: pd.DataFrame = read_data_from_excel(1)
+    cols = list(df2.columns)
     cols.insert(0, cols.pop(cols.index(pn_table_index_key)))
-    df1 = df1[cols]
-    df1.set_index(cols[0], inplace=True)
+    df2 = df2[cols]
+    df2.set_index(cols[0], inplace=True)
     """主机信息上传方法"""
     api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
     global token
@@ -524,16 +582,16 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             "CREATE_DATE_TIME": None,
             "MATERIAL_NO": None,
             "VF_NAME": "",
-            "MATERIAL_CLASS_CODE": None,  # TODO 工厂提供的表格上没有该条数据，需要对接工厂，应该是一个单独的表上获取的
+            "MATERIAL_CLASS_CODE": None,  # TODO 填空
             "PLANT_CODE": planet_code,
             "CS_FILE_TYPE": "",
             "SITE_TYPE": None,
             "MTMSN": "",
-            "PACKING_LOT_NO": None,  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
+            "PACKING_LOT_NO": "",  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "MODEL": None,
             "PRINTED_DESC": "",
-            "PRODUCT_DATE": None,  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
-            "SCAN_DATE": None,  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
+            "PRODUCT_DATE": None,  # TODO 产品编码应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
+            "SCAN_DATE": None,  # TODO 出库日期应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "LUCKY_NO": "",
             "SALEORDER": "NA",
             "COUNTRY": "NA",
@@ -550,13 +608,14 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             body_item["CREATE_DATE_TIME"] = produce_date if produce_date else loss_tip  # TODO
             factory_type = extract_specific_cell_from_series(row, factory_type_key)
             body_item["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
-            body_item["MODEL"] = sn[9:]
             # 以单元格级别逐个提交接口了，而不是跟主机一样按照行进行提交接口
             for _ in keys:
-                if _ in df1.index:
-                    value = df1.loc[_].iloc[0]  # 取消使用列标题定位具体值，使用列的下标,满足不同产品也能使用
+                if _ in df2.index:
+                    value = df2.loc[_].iloc[0]  # 取消使用列标题定位具体值，使用列的下标,满足不同产品也能使用
                     # 根据索引和列标题定位在表2，定位到对应的pn码
                     body_item['MATERIAL_NO'] = value
+                    body_item['MATERIAL_CLASS_CODE'] = loss_tip
+                    body_item["MODEL"] = value
                 else:
                     body_item['MATERIAL_NO'] = loss_tip
 
@@ -581,6 +640,7 @@ def request_handler(api, body):
     try:
         header = get_header()
         response = requests.post(api, json=body, headers=header)
+        print(f"body=====>{body}")
 
         # 获取正确的状态码并安全地调用处理函数
         try:
@@ -609,6 +669,9 @@ def request_handler(api, body):
         print(response.text, f'\t{response.status_code}')
     except ConnectionError:
         show_popup("无法连接服务器，请检查网络连接")
+        header = get_header()
+        response = requests.post(api, json=body, headers=header)
+        logging.info(f"重新获取请求token后的请求结果：{response.text}")
     except Timeout:
         show_popup("请求超时，请重试")
     except HTTPError as e:
@@ -663,6 +726,6 @@ def get_local_config():
     return config
 
 
-# get_token()
+get_token()
 df = read_data_from_excel()
 send_data_to_lecoo(df)
