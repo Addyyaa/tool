@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -52,7 +53,7 @@ uwip_barcode_key = "主机条码"
 produce_date_key = "生产日期"
 planet_code = ""
 # 如果缺少信息的字段使用下面的内容
-loss_tip = "data_missing_temporarily"
+loss_tip = "1"
 no_factory_name_key = "LecooTN"
 no_factory_type_key = "ODM"
 null_info = ""
@@ -193,10 +194,13 @@ def handle_400(response):
         show_popup("数据过大，请联系工具制作人！")
     elif "missing some field in the payload header" in msg:
         show_popup("头部缺少字段，请联系工具制作人")
+        logging.error(response.text)
     elif "missing some field in the payload body" in msg:
         show_popup("缺少部分数据，请检查表格")
+        logging.error(response.text)
     else:
         show_popup(f"未知错误：{msg}")
+        logging.error(response.text)
 
 
 def handle_401(response):
@@ -564,7 +568,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
         body_item = {
             "Machine_No": None,
             "MATERIAL_NO": None,
-            "PACKING_LOT_NO": None,
+            "PACKING_LOT_NO": "",
             "START_DATE": None,
             "Flag_Linked": "",
             "Check_Code": "",
@@ -577,14 +581,13 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             "SHOP": None,
             "UWIP_BARCODE": None,
             "ADD_DEL_FLAG": "A",  # D为删除
-            "SHELL_IND": ""
         }
         if "set body_item":
             sn = extract_specific_cell_from_series(row, sn_key)
             body_item["Machine_No"] = sn
             body_item["MATERIAL_NO"] = sn[: 9]
             batch_no = extract_specific_cell_from_series(row, batch_number_key)
-            body_item["PACKING_LOT_NO"] = batch_no if batch_no else loss_tip
+            body_item["PACKING_LOT_NO"] = batch_no if batch_no else " "   # 该字段无法填空值，会报错
             produce_date = convert_cycle_to_production_date(sn)
             body_item["START_DATE"] = produce_date if produce_date else loss_tip
             factory_name = extract_specific_cell_from_series(row, factory_name_key)
@@ -641,14 +644,14 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
     # 将所有行上传到接口
     for row in params_rows:
         body_item = {
-            "MACHINE_NO": None,
+            "MACHINE_NO": "",
             "MATERIAL_BARCODE_PRE": "",
             "AUTO_ID": "",
-            "MATERIAL_BARCODE": None,
-            "CREATE_DATE_TIME": None,
-            "MATERIAL_NO": None,
+            "MATERIAL_BARCODE": "",
+            "CREATE_DATE_TIME": "",
+            "MATERIAL_NO": "",
             "VF_NAME": "",
-            "MATERIAL_CLASS_CODE": None,  # TODO 填空
+            "MATERIAL_CLASS_CODE": "",  # TODO 填空
             "PLANT_CODE": planet_code,
             "CS_FILE_TYPE": "",
             "SITE_TYPE": "",
@@ -656,7 +659,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             "PACKING_LOT_NO": "",  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "MODEL": "",
             "PRINTED_DESC": "",
-            "PRODUCT_DATE": None,  # TODO 产品编码应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
+            "PRODUCT_DATE": "",  # TODO 产品编码应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "SCAN_DATE": "",  # TODO 出库日期应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "LUCKY_NO": "",
             "SALEORDER": "NA",
@@ -681,7 +684,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                     # 根据索引和列标题定位在表2，定位到对应的pn码
                     body_item['MATERIAL_NO'] = value
                     body_item['MATERIAL_CLASS_CODE'] = loss_tip
-                    body_item["MODEL"] = value
+                    body_item["MODEL"] = sn[:9]
                 else:
                     body_item['MATERIAL_NO'] = loss_tip
 
