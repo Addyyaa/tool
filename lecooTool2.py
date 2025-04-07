@@ -413,7 +413,22 @@ def convert_cycle_to_production_date(weeks: str) -> str:
 
 
 def extract_component_production_date(barcode: str) -> str:
-    month = {
+    try:
+        month = {
+            '1': '01',
+            '2': '02',
+            '3': '03',
+            '4': '04',
+            '5': '05',
+            '6': '06',
+            '7': '07',
+            '8': '08',
+            '9': '09',
+            'A': '10',
+            'B': '11',
+            'C': '12',
+        }
+        day = {
         '1': '01',
         '2': '02',
         '3': '03',
@@ -426,52 +441,41 @@ def extract_component_production_date(barcode: str) -> str:
         'A': '10',
         'B': '11',
         'C': '12',
+        'D': '13',
+        'E': '14',
+        'F': '15',
+        'G': '16',
+        'H': '17',
+        'I': '18',
+        'J': '19',
+        'K': '20',
+        'L': '21',
+        'M': '22',
+        'N': '23',
+        'O': '24',
+        'P': '25',
+        'Q': '26',
+        'R': '27',
+        'S': '28',
+        'T': '29',
+        'U': '30',
+        'V': '31'
     }
-    day = {
-    '1': '01',
-    '2': '02',
-    '3': '03',
-    '4': '04',
-    '5': '05',
-    '6': '06',
-    '7': '07',
-    '8': '08',
-    '9': '09',
-    'A': '10',
-    'B': '11',
-    'C': '12',
-    'D': '13',
-    'E': '14',
-    'F': '15',
-    'G': '16',
-    'H': '17',
-    'I': '18',
-    'J': '19',
-    'K': '20',
-    'L': '21',
-    'M': '22',
-    'N': '23',
-    'O': '24',
-    'P': '25',
-    'Q': '26',
-    'R': '27',
-    'S': '28',
-    'T': '29',
-    'U': '30',
-    'V': '31'
-}
-    date_info = barcode[16:19:1]
-    current_year = datetime.datetime.now().year
-    current_year = int(str(current_year)[:3]) * 10
-    year = date_info[0]
-    print(year)
-    year = int(year) + current_year
-    month_digit = date_info[1]
-    month_part = month[month_digit]
-    day_digit = date_info[2]
-    day_part = day[day_digit]
-    real_date = f'{year}-{month_part}-{day_part}'
-    return real_date
+        date_info = barcode[16:19:1]
+        current_year = datetime.datetime.now().year
+        current_year = int(str(current_year)[:3]) * 10
+        year = date_info[0]
+        year = int(year) + current_year
+        month_digit = date_info[1]
+        month_part = month[month_digit]
+        day_digit = date_info[2]
+        day_part = day[day_digit]
+        real_date = f'{year}-{month_part}-{day_part}'
+        return real_date
+    except Exception as e:
+        logging.error(e)
+        return ""
+
 
 
 
@@ -647,13 +651,13 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             "MATERIAL_CLASS_CODE": None,  # TODO 填空
             "PLANT_CODE": planet_code,
             "CS_FILE_TYPE": "",
-            "SITE_TYPE": None,
+            "SITE_TYPE": "",
             "MTMSN": "",
             "PACKING_LOT_NO": "",  # TODO 批次号应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
-            "MODEL": None,
+            "MODEL": "",
             "PRINTED_DESC": "",
             "PRODUCT_DATE": None,  # TODO 产品编码应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
-            "SCAN_DATE": None,  # TODO 出库日期应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
+            "SCAN_DATE": "",  # TODO 出库日期应该也需要单独一张表，需要跟工厂对接，应该是部件的详细表
             "LUCKY_NO": "",
             "SALEORDER": "NA",
             "COUNTRY": "NA",
@@ -665,9 +669,9 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
         if "set body_item":
             sn = extract_specific_cell_from_series(row, sn_key)
             body_item["MACHINE_NO"] = sn
+            create_date = convert_cycle_to_production_date(sn)
             # 创建日期应该需要重写，大概率是每一个码都有自己的生产日期，而不是主机的生产日期
-            produce_date = extract_specific_cell_from_series(row, produce_date_key)
-            body_item["CREATE_DATE_TIME"] = produce_date if produce_date else loss_tip  # TODO
+            body_item["CREATE_DATE_TIME"] = create_date if create_date else loss_tip  # TODO
             factory_type = extract_specific_cell_from_series(row, factory_type_key)
             body_item["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
             # 以单元格级别逐个提交接口了，而不是跟主机一样按照行进行提交接口
@@ -686,7 +690,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                 component = component if pd.notna(component) else loss_tip
                 body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 meterial_date = extract_component_production_date(component)
-                body_item['PRODUCT_DATE"'] = meterial_date if meterial_date else loss_tip
+                body_item['PRODUCT_DATE'] = meterial_date if meterial_date else loss_tip
                 # body['Data'].append(body_item) # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 body['Data'].append(body_item.copy())
             request_handler(api, body)
