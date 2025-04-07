@@ -411,6 +411,7 @@ def convert_cycle_to_production_date(weeks: str) -> str:
     # 返回格式化的日期字符串
     return last_day.strftime('%Y-%m-%d')
 
+
 def open_file():
     root = tk.Tk()
     root.attributes('-topmost', True)
@@ -471,8 +472,6 @@ def send_data_to_lecoo(excel_data):
         # 确保即使发生错误，窗口也会关闭
         if progress_window is not None and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
             progress_window.destroy()
-
-
 
 
 def tbl_Machine_Sequence(df1: pd.DataFrame):
