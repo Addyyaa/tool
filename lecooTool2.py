@@ -521,6 +521,7 @@ def send_data_to_lecoo(excel_data):
     producer = config.get(option, '生产工厂代码')
     planet_code = manufacturer + '-' + producer
 
+
     # 重置进度计数
     progress_bar = 0
 
@@ -590,8 +591,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             body_item["PACKING_LOT_NO"] = batch_no if batch_no else " "   # 该字段无法填空值，会报错
             produce_date = convert_cycle_to_production_date(sn)
             body_item["START_DATE"] = produce_date if produce_date else loss_tip
-            factory_name = extract_specific_cell_from_series(row, factory_name_key)
-            body_item["PLANT"] = factory_name if factory_name else no_factory_name_key
+            body_item["PLANT"] = planet_code
             factory_type = extract_specific_cell_from_series(row, factory_type_key)
             body_item["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
             body_item["UWIP_SN"] = sn
@@ -634,7 +634,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
     body = {
         "header": {
             "TRL": df_row,
-            "PLANT": factory_code,
+            "PLANT": planet_code,
             "TXT_NAME": txt_name,
             "TXT_NUM": "",
             "TXT_SOURCE": "PRC"
@@ -652,7 +652,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             "MATERIAL_NO": "",
             "VF_NAME": "",
             "MATERIAL_CLASS_CODE": "",  # TODO 填空
-            "PLANT_CODE": planet_code,
+            "PLANT_CODE": "",
             "CS_FILE_TYPE": "",
             "SITE_TYPE": "",
             "MTMSN": "",
