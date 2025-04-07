@@ -412,6 +412,69 @@ def convert_cycle_to_production_date(weeks: str) -> str:
     return last_day.strftime('%Y-%m-%d')
 
 
+def extract_component_production_date(barcode: str) -> str:
+    month = {
+        '1': '01',
+        '2': '02',
+        '3': '03',
+        '4': '04',
+        '5': '05',
+        '6': '06',
+        '7': '07',
+        '8': '08',
+        '9': '09',
+        'A': '10',
+        'B': '11',
+        'C': '12',
+    }
+    day = {
+    '1': '01',
+    '2': '02',
+    '3': '03',
+    '4': '04',
+    '5': '05',
+    '6': '06',
+    '7': '07',
+    '8': '08',
+    '9': '09',
+    'A': '10',
+    'B': '11',
+    'C': '12',
+    'D': '13',
+    'E': '14',
+    'F': '15',
+    'G': '16',
+    'H': '17',
+    'I': '18',
+    'J': '19',
+    'K': '20',
+    'L': '21',
+    'M': '22',
+    'N': '23',
+    'O': '24',
+    'P': '25',
+    'Q': '26',
+    'R': '27',
+    'S': '28',
+    'T': '29',
+    'U': '30',
+    'V': '31'
+}
+    date_info = barcode[16:19:1]
+    current_year = datetime.datetime.now().year
+    current_year = int(str(current_year)[:3]) * 10
+    year = date_info[0]
+    print(year)
+    year = int(year) + current_year
+    month_digit = date_info[1]
+    month_part = month[month_digit]
+    day_digit = date_info[2]
+    day_part = day[day_digit]
+    real_date = f'{year}-{month_part}-{day_part}'
+    return real_date
+
+
+
 def open_file():
     root = tk.Tk()
     root.attributes('-topmost', True)
@@ -622,6 +685,8 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                 component = extract_specific_cell_from_series(row, _)
                 component = component if pd.notna(component) else loss_tip
                 body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
+                meterial_date = extract_component_production_date(component)
+                body_item['PRODUCT_DATE"'] = meterial_date if meterial_date else loss_tip
                 # body['Data'].append(body_item) # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 body['Data'].append(body_item.copy())
             request_handler(api, body)
