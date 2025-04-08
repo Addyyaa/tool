@@ -62,6 +62,17 @@ total_request_count = 0
 progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
+# token_api = 'https://api-cn.lenovo.com/token'
+# mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+# material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+consumer_key = '1'
+consumer_secret = '1'
+token_api = '1'
+mathine_api = '1'
+material_api = '1'
+
 
 
 # 自定义一个异常类用于token失效是抛出
@@ -313,9 +324,16 @@ def show_progress_window(total, current):
 
 
 def get_token():
-    api = 'https://api-cn-t.lenovo.com/uat/token'
-    consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
-    consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
+    config = get_local_config()
+    option = 'CONFIG'
+    global token_api, consumer_key, consumer_secret
+    tk = config.get(option, 'token_api')
+    token_api = tk if tk is not None and tk != "" else token_api
+    api = token_api
+    csk = config.get(option, 'consumer_secret')
+    consumer_secret = csk if csk is not None and csk != "" else consumer_secret
+    csv = config.get(option, 'consumer_key')
+    consumer_key = csv if csv is not None and csv != "" else consumer_key
     auth_str = f"{consumer_key}:{consumer_secret}"
     auth_byte = auth_str.encode("utf-8")
     auth_base64 = base64.b64encode(auth_byte).decode("utf-8")
@@ -433,38 +451,38 @@ def extract_component_production_date(barcode: str) -> str:
             'C': '12',
         }
         day = {
-        '1': '01',
-        '2': '02',
-        '3': '03',
-        '4': '04',
-        '5': '05',
-        '6': '06',
-        '7': '07',
-        '8': '08',
-        '9': '09',
-        'A': '10',
-        'B': '11',
-        'C': '12',
-        'D': '13',
-        'E': '14',
-        'F': '15',
-        'G': '16',
-        'H': '17',
-        'I': '18',
-        'J': '19',
-        'K': '20',
-        'L': '21',
-        'M': '22',
-        'N': '23',
-        'O': '24',
-        'P': '25',
-        'Q': '26',
-        'R': '27',
-        'S': '28',
-        'T': '29',
-        'U': '30',
-        'V': '31'
-    }
+            '1': '01',
+            '2': '02',
+            '3': '03',
+            '4': '04',
+            '5': '05',
+            '6': '06',
+            '7': '07',
+            '8': '08',
+            '9': '09',
+            'A': '10',
+            'B': '11',
+            'C': '12',
+            'D': '13',
+            'E': '14',
+            'F': '15',
+            'G': '16',
+            'H': '17',
+            'I': '18',
+            'J': '19',
+            'K': '20',
+            'L': '21',
+            'M': '22',
+            'N': '23',
+            'O': '24',
+            'P': '25',
+            'Q': '26',
+            'R': '27',
+            'S': '28',
+            'T': '29',
+            'U': '30',
+            'V': '31'
+        }
         date_info = barcode[16:19:1]
         current_year = datetime.datetime.now().year
         current_year = int(str(current_year)[:3]) * 10
@@ -479,8 +497,6 @@ def extract_component_production_date(barcode: str) -> str:
     except Exception as e:
         logging.error(e)
         return ""
-
-
 
 
 def open_file():
@@ -520,7 +536,11 @@ def send_data_to_lecoo(excel_data):
     manufacturer = config.get(option, 'odm厂商')
     producer = config.get(option, '生产工厂代码')
     planet_code = manufacturer + '-' + producer
-
+    global mathine_api, material_api
+    mc = config.get(option, 'mathine_api')
+    mathine_api = mc if mc is not None and mc != "" else mathine_api
+    mt = config.get(option, 'material_api')
+    material_api = mt if mt is not None and mt != "" else material_api
 
     # 重置进度计数
     progress_bar = 0
@@ -551,7 +571,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
     df_row = df1.shape[0]
     params_rows = df1.iterrows()
     """主机信息上传方法"""
-    api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+    api = mathine_api
 
     body = {
         "header": {
@@ -588,7 +608,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             body_item["Machine_No"] = sn
             body_item["MATERIAL_NO"] = sn[: 9]
             batch_no = extract_specific_cell_from_series(row, batch_number_key)
-            body_item["PACKING_LOT_NO"] = batch_no if batch_no else " "   # 该字段无法填空值，会报错
+            body_item["PACKING_LOT_NO"] = batch_no if batch_no else " "  # 该字段无法填空值，会报错
             produce_date = convert_cycle_to_production_date(sn)
             body_item["START_DATE"] = produce_date if produce_date else loss_tip
             body_item["PLANT"] = planet_code
@@ -629,7 +649,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
     df2 = df2[cols]
     df2.set_index(cols[0], inplace=True)
     """主机信息上传方法"""
-    api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+    api = material_api
     global token
     body = {
         "header": {
@@ -711,7 +731,7 @@ def request_handler(api, body):
     try:
         header = get_header()
         response = requests.post(api, json=body, headers=header)
-        print(f"body=====>{body}")
+        print(f"body=====>{body}\n", api)
 
         # 获取正确的状态码并安全地调用处理函数
         try:
