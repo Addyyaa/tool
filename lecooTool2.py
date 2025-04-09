@@ -62,16 +62,12 @@ total_request_count = 0
 progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
-# token_api = 'https://api-cn.lenovo.com/token'
-# mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-# material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
-# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
-consumer_key = '1'
-consumer_secret = '1'
-token_api = '1'
-mathine_api = '1'
-material_api = '1'
+token_api = 'https://api-cn.lenovo.com/token'
+mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+
 
 
 
