@@ -107,7 +107,10 @@ def create_progress_window():
     try:
         progress_window = tk.Tk()
         progress_window.title("处理进度")
-        progress_window.geometry("300x100")
+        # 初始大小，后面会更新
+        initial_width = 300
+        initial_height = 100
+        progress_window.geometry(f"{initial_width}x{initial_height}")
         progress_window.resizable(False, False)
 
         # 添加窗口关闭处理器
@@ -125,6 +128,27 @@ def create_progress_window():
         progress_bar_widget = ttk.Progressbar(progress_window, length=200, mode='determinate')
         progress_bar_widget.pack(pady=10)
         progress_bar_widget['value'] = 0
+
+        # 强制更新窗口以获取准确的尺寸
+        progress_window.update_idletasks()
+
+        # 获取屏幕宽度和高度
+        screen_width = progress_window.winfo_screenwidth()
+        screen_height = progress_window.winfo_screenheight()
+
+        # 获取窗口的实际宽度和高度
+        window_width = progress_window.winfo_width()
+        window_height = progress_window.winfo_height()
+
+        # 计算居中位置
+        x_position = (screen_width - window_width) // 2
+        y_position = (screen_height - window_height) // 2
+
+        # 设置窗口居中显示
+        progress_window.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+
+        # 再次强制更新以确保位置立即生效
+        progress_window.update()
 
         # 确保窗口保持在最前面
         progress_window.attributes('-topmost', True)
@@ -490,10 +514,14 @@ def extract_component_production_date(barcode: str) -> str:
             'W': '30',
             'X': '31'
         }
+        # if len(barcode) >= 23:
+        #     date_info = barcode[16:19:1]
+        # else:
+        #     date_info = barcode
         if len(barcode) >= 23:
-            date_info = barcode[16:19:1]
+            date_info = barcode[-5:-8:-1][::-1]
         else:
-            date_info = barcode
+            date_info = barcode[-4:-7:-1][::-1]  # TODO 此处键鼠的SN与其他规则不一致，无法断定生产日期，需要与工厂确认
         try:
             current_year = datetime.datetime.now().year
             current_year = int(str(current_year)[:3]) * 10
@@ -504,7 +532,6 @@ def extract_component_production_date(barcode: str) -> str:
             sys.exit(1)
         try:
             month_digit = str(int(date_info[1]) + 1) if date_info[1] == '0' else date_info[1]
-            print(month_digit, type(month_digit))
             month_part = month[month_digit]
         except Exception as m:
             logging.error(f"处理月出错\t{m}\t{date_info}")
@@ -516,6 +543,7 @@ def extract_component_production_date(barcode: str) -> str:
             logging.error(f"处理日出错\t{d}\t{date_info}")
             sys.exit(1)
         real_date = f'{year}-{month_part}-{day_part}'
+        print(f"解析出生日期：{real_date}")
         return real_date
     except Exception as e:
         logging.error(e)
@@ -556,7 +584,7 @@ def send_data_to_lecoo(excel_data):
     config = get_local_config()
     global planet_code
     option = 'CONFIG'
-    manufacturer = config.get(option, 'odm厂商')
+    manufacturer = config.get(option, 'ODM')
     producer = config.get(option, '生产工厂代码')
     planet_code = manufacturer + '-' + producer
     global mathine_api, material_api, pn_table_index_key
@@ -632,7 +660,12 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             sn = extract_specific_cell_from_series(row, sn_key)
             print(sn)
             body_item["Machine_No"] = sn
-            body_item["MATERIAL_NO"] = sn[: 9]
+            try:
+                body_item["MATERIAL_NO"] = sn[: 9]
+            except Exception as e:
+                show_popup(f"表格文件存在干扰的隐藏数据，请新建一个空的excel文件后，手动从有问题的表格数据复制到空的excel，建议使用ctrl+a键全选后粘贴到空的excel并保存")
+                logging.error(f"获取物料号时出错: {e}")
+                sys.exit(1)
             batch_no = extract_specific_cell_from_series(row, batch_number_key)
             body_item["PACKING_LOT_NO"] = batch_no if batch_no else " "  # 该字段无法填空值，会报错
             produce_date = convert_cycle_to_production_date(sn)
@@ -668,7 +701,12 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
     keys = list(df1.keys())
     keys = list(filter(lambda x: x not in key_to_remove, keys))
     """读取PN表"""
-    df2: pd.DataFrame = read_data_from_excel(1)
+    try:
+        df2: pd.DataFrame = read_data_from_excel(1)
+    except Exception as e:
+        logging.error(f"读取PN表时出错: {e}")
+        show_popup("缺少第二张表：如8码表")
+        sys.exit(1)
     cols = list(df2.columns)
     cols.insert(0, cols.pop(cols.index(pn_table_index_key)))
     df2 = df2[cols]
@@ -764,7 +802,9 @@ def request_handler(api, body):
             json_body = json.loads(json.dumps(body, default=str))
             response = requests.post(api, json=json_body, headers=header)
         except Exception as e:
+            show_popup(f"请求接口时出错：{e}")
             logging.error(f"请求接口时出错：{e}")
+            sys.exit()
 
         # 获取正确的状态码并安全地调用处理函数
         try:
@@ -831,12 +871,12 @@ def get_daily_counter():
 def get_local_config():
     config = configparser.ConfigParser()
     if os.path.exists("config.ini"):
-        config.read("config.ini")
+        config.read("config.ini", encoding='utf-8')
         if not config.sections() or not config.has_section('CONFIG') or not config.options('CONFIG'):
             config['CONFIG'] = {
                 '生产工厂代码': '',
                 '每批处理数量': '',
-                'ODM厂商': 'OST'
+                'ODM': 'OST'
             }
             with open('config.ini', 'w') as configfile:
                 config.write(configfile)
@@ -845,7 +885,7 @@ def get_local_config():
         config['CONFIG'] = {
             '生产工厂代码': '',
             '每批处理数量': '',
-            'ODM厂商': 'OST',
+            'ODM': 'OST',
             'token_api': '',
             'mathine_api': '',
             'material_api': '',
@@ -853,7 +893,7 @@ def get_local_config():
             'consumer_secret': '',
             'pn_key': ''
         }
-        with open('config.ini', 'w') as configfile:
+        with open('config.ini', 'w', encoding='utf-8') as configfile:
             config.write(configfile)
     return config
 
