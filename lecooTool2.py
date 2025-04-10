@@ -62,11 +62,20 @@ total_request_count = 0
 progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
-token_api = 'https://api-cn.lenovo.com/token'
+# 测试环境 TODO 切换成正式环境
+token_api = 'https://api-cn-t.lenovo.com/uat/token'
 mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
 material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
-consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
+consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
+
+# 生产环境
+# token_api = 'https://api-cn.lenovo.com/token'
+# mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+# material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+
 
 
 
@@ -325,6 +334,7 @@ def get_token():
     global token_api, consumer_key, consumer_secret
     tk = config.get(option, 'token_api')
     token_api = tk if tk is not None and tk != "" else token_api
+    print(token_api)
     api = token_api
     csk = config.get(option, 'consumer_secret')
     consumer_secret = csk if csk is not None and csk != "" else consumer_secret
@@ -370,6 +380,7 @@ def generate_timestamp():
 
 def extract_specific_cell_from_series(row: Tuple[Hashable, pd.Series], key: str):
     value = row[1].get(key, None)
+    # print(value, key)
     if isinstance(value, pd.Timestamp):
         value = value.strftime('%Y-%m-%d %H:%M:%S')
     return None if pd.isna(value) else value  # 判断是否为空
@@ -464,30 +475,46 @@ def extract_component_production_date(barcode: str) -> str:
             'F': '15',
             'G': '16',
             'H': '17',
-            'I': '18',
-            'J': '19',
-            'K': '20',
-            'L': '21',
-            'M': '22',
-            'N': '23',
-            'O': '24',
-            'P': '25',
-            'Q': '26',
-            'R': '27',
-            'S': '28',
-            'T': '29',
-            'U': '30',
-            'V': '31'
+            'J': '18',
+            'K': '19',
+            'L': '20',
+            'M': '21',
+            'N': '22',
+            'P': '23',
+            'Q': '24',
+            'R': '25',
+            'S': '26',
+            'T': '27',
+            'U': '28',
+            'V': '29',
+            'W': '30',
+            'X': '31'
         }
-        date_info = barcode[16:19:1]
-        current_year = datetime.datetime.now().year
-        current_year = int(str(current_year)[:3]) * 10
-        year = date_info[0]
-        year = int(year) + current_year
-        month_digit = date_info[1]
-        month_part = month[month_digit]
-        day_digit = date_info[2]
-        day_part = day[day_digit]
+        if len(barcode) >= 23:
+            date_info = barcode[16:19:1]
+        else:
+            date_info = barcode
+        try:
+            current_year = datetime.datetime.now().year
+            current_year = int(str(current_year)[:3]) * 10
+            year = date_info[0]
+            year = int(year) + current_year
+        except Exception as y:
+            logging.error(f"处理年出错\t{y}\t{date_info}")
+            sys.exit(1)
+        try:
+            month_digit = str(int(date_info[1]) + 1) if date_info[1] == '0' else date_info[1]
+            print(month_digit, type(month_digit))
+            month_part = month[month_digit]
+        except Exception as m:
+            logging.error(f"处理月出错\t{m}\t{date_info}")
+            sys.exit(1)
+        try:
+            day_digit = date_info[2]
+            day_part = day[day_digit]
+        except Exception as d:
+            logging.error(f"处理日出错\t{d}\t{date_info}")
+            sys.exit(1)
         real_date = f'{year}-{month_part}-{day_part}'
         return real_date
     except Exception as e:
@@ -532,11 +559,13 @@ def send_data_to_lecoo(excel_data):
     manufacturer = config.get(option, 'odm厂商')
     producer = config.get(option, '生产工厂代码')
     planet_code = manufacturer + '-' + producer
-    global mathine_api, material_api
+    global mathine_api, material_api, pn_table_index_key
     mc = config.get(option, 'mathine_api')
     mathine_api = mc if mc is not None and mc != "" else mathine_api
     mt = config.get(option, 'material_api')
     material_api = mt if mt is not None and mt != "" else material_api
+    pk = config.get(option, 'pn_key')
+    pn_table_index_key = pk if pk is not None and pk != "" else pn_table_index_key
 
     # 重置进度计数
     progress_bar = 0
@@ -601,6 +630,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
         }
         if "set body_item":
             sn = extract_specific_cell_from_series(row, sn_key)
+            print(sn)
             body_item["Machine_No"] = sn
             body_item["MATERIAL_NO"] = sn[: 9]
             batch_no = extract_specific_cell_from_series(row, batch_number_key)
@@ -620,7 +650,6 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             uwip_barcode = extract_specific_cell_from_series(row, uwip_barcode_key)
             body_item["UWIP_BARCODE"] = uwip_barcode if uwip_barcode else null_info
         data_list_for_count.append(body_item)
-
         if len(data_list_for_count) >= batch_size:
             body["Data"] = data_list_for_count
             request_handler(api, body)
@@ -707,6 +736,8 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                 # 获取部件条码
                 component = extract_specific_cell_from_series(row, _)
                 component = component if pd.notna(component) else loss_tip
+                if 'SN' in component:
+                    component = component.split('SN:', 1)[1]
                 body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 meterial_date = extract_component_production_date(component)
                 body_item['PRODUCT_DATE'] = meterial_date if meterial_date else loss_tip
@@ -723,11 +754,17 @@ def request_handler(api, body):
             return True
         except ValueError:
             return False
-
+        except Exception as e:
+            logging.error(f"解析响应内容时出错：{e}")
     try:
         header = get_header()
-        response = requests.post(api, json=body, headers=header)
-        print(f"body=====>{body}\n", api)
+        try:
+            # 使用json模块进行序列化处理
+            # 这会将所有NumPy和pandas特殊类型转换为Python标准类型
+            json_body = json.loads(json.dumps(body, default=str))
+            response = requests.post(api, json=json_body, headers=header)
+        except Exception as e:
+            logging.error(f"请求接口时出错：{e}")
 
         # 获取正确的状态码并安全地调用处理函数
         try:
@@ -751,6 +788,8 @@ def request_handler(api, body):
                 global progress_bar
                 if handler == handle_200:  # 如果是成功处理函数
                     progress_bar += 1
+            except Exception as e:
+                logging.warning(f"处理响应时出错: {e}\t状态码：{response.status_code}\ttxt：{response.text}")
         except Exception as e:
             logging.warning(f"处理响应时出错: {e}\t状态码：{response.status_code}\ttxt：{response.text}")
         print(response.text, f'\t{response.status_code}')
@@ -806,7 +845,13 @@ def get_local_config():
         config['CONFIG'] = {
             '生产工厂代码': '',
             '每批处理数量': '',
-            'ODM厂商': 'OST'
+            'ODM厂商': 'OST',
+            'token_api': '',
+            'mathine_api': '',
+            'material_api': '',
+            'consumer_key': '',
+            'consumer_secret': '',
+            'pn_key': ''
         }
         with open('config.ini', 'w') as configfile:
             config.write(configfile)
