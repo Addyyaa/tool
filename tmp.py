@@ -1,85 +1,58 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import vlc
-import threading
+import json
+
+import requests
 import time
 
-class VideoPlayerApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("多视频播放器")
-        self.root.geometry("400x300")
+server = "139.224.192.36"
+login_api = "/api/v1/account/login"
+port = "8082"
+url = "http://" + server + ":" + port
+test_api = 'http://139.224.192.36:8082/api/v1/pay/aliPaySign'
+token = 'eyJhbGciOiJIUzI1NiJ9' \
+        '.eyJhY2NvdW50SWQiOjI5MSwiYWNjb3VudCI6InRlc3QyIiwibG9naW5U ' \
+        'eXBlIjozLCJ1c2VyVHlwZSI6MSwiaWF0IjoxNzQ0MjU1NDM5LCJuYmYiO' \
+        'jE3NDQyNTU0MzksImV4cCI6MTc0Njg0NzQzOX0.q0Z_KZWT-NoA0L' \
+        '6TVVVTAxOw3wKTHRLp5fOwJP7y7x8'
+userAgent = 'Mozilla/5.0 (Linux; Android 15; SM-S9380 Build/AP3A.240905.0' \
+            '15.A2; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 ' \
+            'Chrome/134.0.6998.135 Mobile Safari/537.36 uni-app Html5Plu' \
+            's/1.0 (Immersed/30.133333)'
+content_type = 'application/json'
 
-        # 存储选择的视频路径
-        self.video_paths = []
-        # 存储 VLC 播放实例
-        self.players = []
+header = {
+    "User-Agent": userAgent,
+    "Content-Type": content_type,
+    "X-TOKEN": token
+}
 
-        # GUI 组件
-        self.label = tk.Label(root, text="选择多个视频文件后点击开始播放")
-        self.label.pack(pady=10)
 
-        self.select_button = tk.Button(root, text="选择视频", command=self.select_videos)
-        self.select_button.pack(pady=5)
+def login():
+    api = login_api
+    login_url = url + api
+    data = json.dumps({"account": "test2@tester.com", "password": "sf123123", "areaCode": "+86", "loginType": 3})
+    response = requests.post(url=login_url, data=data, headers=header)
+    tx = response.json()['data']
+    header['X-TOKEN'] = tx
+    print(header)
 
-        self.video_listbox = tk.Listbox(root, height=10, width=50)
-        self.video_listbox.pack(pady=10)
 
-        self.play_button = tk.Button(root, text="开始播放", command=self.start_playback, state="disabled")
-        self.play_button.pack(pady=5)
+login()
 
-    def select_videos(self):
-        # 打开文件对话框，支持多选
-        files = filedialog.askopenfilenames(
-            title="选择视频文件",
-            filetypes=[("视频文件", "*.mp4 *.avi *.mkv *.mov *.wmv")]
-        )
-        if files:
-            self.video_paths = list(files)
-            self.video_listbox.delete(0, tk.END)  # 清空列表
-            for path in self.video_paths:
-                self.video_listbox.insert(tk.END, path.split('/')[-1])  # 只显示文件名
-            self.play_button.config(state="normal")  # 启用播放按钮
-        else:
-            messagebox.showwarning("警告", "未选择任何视频文件！")
+payload = {
+    "paymentClientType": 2,
+    "orderNo": "S25041110494884",
+    "payAmount": 0.01,
+    "orderId": 0,
+    "ordersState": 0,
+    "orderTitle": "Pintura Life ¥0.01/month,100GB云空间",
+    "outOrdersNo": "string",
+    "ordersType": 1
+}
 
-    def play_video(self, path):
-        # 为每个视频创建一个 VLC 实例并播放
-        instance = vlc.Instance()
-        player = instance.media_player_new()
-        media = instance.media_new(path)
-        player.set_media(media)
-        player.play()
-        self.players.append(player)  # 保存播放器实例
+start_time = time.time()
+response = requests.post(url=test_api, headers=header, json=payload)
 
-        # 等待播放结束（可选）
-        while player.is_playing():
-            time.sleep(1)
+end_time = time.time()
+consume_time = round((end_time - start_time) * 1000, 2)
 
-    def start_playback(self):
-        if not self.video_paths:
-            messagebox.showerror("错误", "请先选择视频文件！")
-            return
-
-        # 清空之前的播放器实例
-        self.players = []
-
-        # 为每个视频启动一个线程播放
-        for path in self.video_paths:
-            thread = threading.Thread(target=self.play_video, args=(path,))
-            thread.daemon = True  # 设置为守护线程，随主程序关闭
-            thread.start()
-
-        messagebox.showinfo("提示", f"正在播放 {len(self.video_paths)} 个视频")
-
-    def on_closing(self):
-        # 关闭时停止所有播放
-        for player in self.players:
-            player.stop()
-        self.root.destroy()
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = VideoPlayerApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)  # 处理窗口关闭
-    root.mainloop()
+print(f"consume_time: {consume_time} ms")

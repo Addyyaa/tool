@@ -53,7 +53,7 @@ uwip_barcode_key = "主机条码"
 produce_date_key = "生产日期"
 planet_code = ""
 # 如果缺少信息的字段使用下面的内容
-loss_tip = "1"
+loss_tip = ""
 no_factory_name_key = "LecooTN"
 no_factory_type_key = "ODM"
 null_info = ""
@@ -63,21 +63,18 @@ progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
 # 测试环境 TODO 切换成正式环境
-token_api = 'https://api-cn-t.lenovo.com/uat/token'
-mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
-consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
+# token_api = 'https://api-cn-t.lenovo.com/uat/token'
+# mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+# material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+# consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
+# consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
 
 # 生产环境
-# token_api = 'https://api-cn.lenovo.com/token'
-# mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-# material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
-# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
-
-
-
+token_api = 'https://api-cn.lenovo.com/token'
+mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
 
 
 # 自定义一个异常类用于token失效是抛出
@@ -529,21 +526,24 @@ def extract_component_production_date(barcode: str) -> str:
             year = int(year) + current_year
         except Exception as y:
             logging.error(f"处理年出错\t{y}\t{date_info}")
+            show_popup("SN码的日期存在数字0，无法转换为年份，不符合规则，请检查")
             sys.exit(1)
         try:
-            month_digit = str(int(date_info[1]) + 1) if date_info[1] == '0' else date_info[1]
+            # month_digit = str(int(date_info[1]) + 1) if date_info[1] == '0' else date_info[1]
+            month_digit = date_info[1]
             month_part = month[month_digit]
         except Exception as m:
             logging.error(f"处理月出错\t{m}\t{date_info}")
+            show_popup("SN码的日期存在数字0，无法转换为月份，不符合规则，请检查")
             sys.exit(1)
         try:
             day_digit = date_info[2]
             day_part = day[day_digit]
         except Exception as d:
             logging.error(f"处理日出错\t{d}\t{date_info}")
+            show_popup("SN码的日期存在数字0，无法转换为日，不符合规则，请检查")
             sys.exit(1)
         real_date = f'{year}-{month_part}-{day_part}'
-        print(f"解析出生日期：{real_date}")
         return real_date
     except Exception as e:
         logging.error(e)
@@ -663,7 +663,8 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
             try:
                 body_item["MATERIAL_NO"] = sn[: 9]
             except Exception as e:
-                show_popup(f"表格文件存在干扰的隐藏数据，请新建一个空的excel文件后，手动从有问题的表格数据复制到空的excel，建议使用ctrl+a键全选后粘贴到空的excel并保存")
+                show_popup(
+                    f"表格文件存在干扰的隐藏数据，请新建一个空的excel文件后，手动从有问题的表格数据复制到空的excel，建议使用ctrl+a键全选后粘贴到空的excel并保存")
                 logging.error(f"获取物料号时出错: {e}")
                 sys.exit(1)
             batch_no = extract_specific_cell_from_series(row, batch_number_key)
@@ -760,24 +761,31 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             body_item["CREATE_DATE_TIME"] = create_date if create_date else loss_tip  # TODO
             factory_type = extract_specific_cell_from_series(row, factory_type_key)
             body_item["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
+            # 设置 MODEL 码，因为与主机的8码一致所以不需要循环遍历
+            body_item["MODEL"] = sn[:9]
             # 以单元格级别逐个提交接口了，而不是跟主机一样按照行进行提交接口
             for _ in keys:
-                if _ in df2.index:
-                    value = df2.loc[_].iloc[0]  # 取消使用列标题定位具体值，使用列的下标,满足不同产品也能使用
-                    # 根据索引和列标题定位在表2，定位到对应的pn码
-                    body_item['MATERIAL_NO'] = value
-                    body_item['MATERIAL_CLASS_CODE'] = loss_tip
-                    body_item["MODEL"] = sn[:9]
-                else:
-                    body_item['MATERIAL_NO'] = loss_tip
+                # if _ in df2.index:
+                #     value = df2.loc[_].iloc[0]  # 取消使用列标题定位具体值，使用列的下标,满足不同产品也能使用
+                #     # 根据索引和列标题定位在表2，定位到对应的pn码
+                #     body_item['MATERIAL_NO'] = value
+                #     body_item['MATERIAL_CLASS_CODE'] = loss_tip
+                #     body_item["MODEL"] = sn[:9]
+                # else:
+                #     body_item['MATERIAL_NO'] = loss_tip
 
                 # 获取部件条码
                 component = extract_specific_cell_from_series(row, _)
                 component = component if pd.notna(component) else loss_tip
                 if 'SN' in component:
                     component = component.split('SN:', 1)[1]
+                    meterial_date = create_date
+                    # 设置MATERIAL_NO
+                    body_item['MATERIAL_NO'] = component
+                else:
+                    meterial_date = extract_component_production_date(component)
+                    body_item['MATERIAL_NO'] = component[3:12]
                 body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
-                meterial_date = extract_component_production_date(component)
                 body_item['PRODUCT_DATE'] = meterial_date if meterial_date else loss_tip
                 # body['Data'].append(body_item) # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 body['Data'].append(body_item.copy())
@@ -786,6 +794,8 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
 
 
 def request_handler(api, body):
+    print(f"body:\t{json.dumps(body, ensure_ascii=False)}")
+
     def is_json(response1):
         try:
             response1.json()
@@ -794,6 +804,7 @@ def request_handler(api, body):
             return False
         except Exception as e:
             logging.error(f"解析响应内容时出错：{e}")
+
     try:
         header = get_header()
         try:
