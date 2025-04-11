@@ -658,7 +658,6 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
         }
         if "set body_item":
             sn = extract_specific_cell_from_series(row, sn_key)
-            print(sn)
             body_item["Machine_No"] = sn
             try:
                 body_item["MATERIAL_NO"] = sn[: 9]
@@ -794,7 +793,6 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
 
 
 def request_handler(api, body):
-    print(f"body:\t{json.dumps(body, ensure_ascii=False)}")
 
     def is_json(response1):
         try:
