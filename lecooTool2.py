@@ -910,3 +910,4 @@ def get_local_config():
 get_token()
 df = read_data_from_excel()
 send_data_to_lecoo(df)
+show_popup("数据传输完成！")
