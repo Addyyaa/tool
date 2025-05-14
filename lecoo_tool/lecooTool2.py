@@ -17,6 +17,7 @@ from tkinter import Toplevel, ttk
 from requests.exceptions import ConnectionError, Timeout, HTTPError
 from datetime import timedelta
 import re
+from lecoo_pkidreader import PKIDReader
 
 # 配置日志记录器
 logging.basicConfig(level=logging.INFO,
@@ -63,18 +64,19 @@ progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
 # 测试环境 TODO 切换成正式环境
-# token_api = 'https://api-cn-t.lenovo.com/uat/token'
-# mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-# material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-# consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
-# consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
+token_api = 'https://api-cn-t.lenovo.com/uat/token'
+mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
+consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
 
-# 生产环境
-token_api = 'https://api-cn.lenovo.com/token'
-mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
-consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+
+# # 生产环境
+# token_api = 'https://api-cn.lenovo.com/token'
+# mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+# material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
 
 
 # 自定义一个异常类用于token失效是抛出
@@ -353,8 +355,8 @@ def get_token():
     config = get_local_config()
     option = 'CONFIG'
     global token_api, consumer_key, consumer_secret
-    tk = config.get(option, 'token_api')
-    token_api = tk if tk is not None and tk != "" else token_api
+    tkn = config.get(option, 'token_api')
+    token_api = tkn if tkn is not None and tkn != "" else token_api
     print(token_api)
     api = token_api
     csk = config.get(option, 'consumer_secret')
@@ -520,7 +522,10 @@ def extract_component_production_date(barcode: str) -> str:
         else:
             date_info = barcode[-4:-7:-1][::-1]  # TODO 此处键鼠的SN与其他规则不一致，无法断定生产日期，需要与工厂确认
         try:
+            print(barcode)
+            print(date_info)
             current_year = datetime.datetime.now().year
+            print(current_year)
             current_year = int(str(current_year)[:3]) * 10
             year = date_info[0]
             year = int(year) + current_year
@@ -606,7 +611,7 @@ def send_data_to_lecoo(excel_data):
         tbl_Machine_Sequence(excel_data)
         tbl_Packing_Machine_Material(excel_data)
         # 如果所有处理都完成但窗口还存在，手动更新一次
-        file_path_tmp = f'resource/tmp/'
+        file_path_tmp = f'../resource/tmp/'
         new_name = file_path_tmp + (txt_name + '.xlsx')
         print(file_path_tmp, new_name)
         if file_path is not None and new_name is not None:
@@ -700,17 +705,17 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
     key_to_remove = ['序号', sn_key, '批次号', '日期']
     keys = list(df1.keys())
     keys = list(filter(lambda x: x not in key_to_remove, keys))
-    """读取PN表"""
-    try:
-        df2: pd.DataFrame = read_data_from_excel(1)
-    except Exception as e:
-        logging.error(f"读取PN表时出错: {e}")
-        show_popup("缺少第二张表：如8码表")
-        sys.exit(1)
-    cols = list(df2.columns)
-    cols.insert(0, cols.pop(cols.index(pn_table_index_key)))
-    df2 = df2[cols]
-    df2.set_index(cols[0], inplace=True)
+    # """读取PN表"""
+    # try:
+    #     df2: pd.DataFrame = read_data_from_excel(1)
+    # except Exception as e:
+    #     logging.error(f"读取PN表时出错: {e}")
+    #     show_popup("缺少第二张表：如8码表")
+    #     sys.exit(1)
+    # cols = list(df2.columns)
+    # cols.insert(0, cols.pop(cols.index(pn_table_index_key)))
+    # df2 = df2[cols]
+    # df2.set_index(cols[0], inplace=True)
     """主机信息上传方法"""
     api = material_api
     global token
@@ -762,6 +767,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             body_item["SITE_TYPE"] = factory_type if factory_type else no_factory_type_key
             # 设置 MODEL 码，因为与主机的8码一致所以不需要循环遍历
             body_item["MODEL"] = sn[:9]
+
             # 以单元格级别逐个提交接口了，而不是跟主机一样按照行进行提交接口
             for _ in keys:
                 # if _ in df2.index:
@@ -793,7 +799,6 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
 
 
 def request_handler(api, body):
-
     def is_json(response1):
         try:
             response1.json()
@@ -810,6 +815,7 @@ def request_handler(api, body):
             # 这会将所有NumPy和pandas特殊类型转换为Python标准类型
             json_body = json.loads(json.dumps(body, default=str))
             response = requests.post(api, json=json_body, headers=header)
+            print(f"======>{json.dumps(body)}")  # TODO 删掉
         except Exception as e:
             show_popup(f"请求接口时出错：{e}")
             logging.error(f"请求接口时出错：{e}")
@@ -861,7 +867,7 @@ def get_daily_counter():
     """
     global counter
     current_date = datetime.date.today().strftime("%Y%m%d")
-    filename = "resource/tmp/counter.txt"
+    filename = "../resource/tmp/counter.txt"
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     if not os.path.exists(filename):
         counter = 1
@@ -879,7 +885,7 @@ def get_daily_counter():
 
 def get_local_config():
     config = configparser.ConfigParser()
-    if os.path.exists("config.ini"):
+    if os.path.exists("./config.ini"):
         config.read("config.ini", encoding='utf-8')
         if not config.sections() or not config.has_section('CONFIG') or not config.options('CONFIG'):
             config['CONFIG'] = {
@@ -887,27 +893,38 @@ def get_local_config():
                 '每批处理数量': '',
                 'ODM': 'OST'
             }
-            with open('config.ini', 'w') as configfile:
+            with open('../config.ini', 'w') as configfile:
                 config.write(configfile)
     else:
         logging.info("未找到配置文件，开始创建配置文件")
         config['CONFIG'] = {
-            '生产工厂代码': '',
-            '每批处理数量': '',
-            'ODM': 'OST',
+            '生产工厂代码': 'AT',
+            '每批处理数量': '100',
+            'ODM': 'LC',
             'token_api': '',
             'mathine_api': '',
             'material_api': '',
             'consumer_key': '',
             'consumer_secret': '',
-            'pn_key': ''
+            'pn_key': '8码'
         }
-        with open('config.ini', 'w', encoding='utf-8') as configfile:
+        with open('./config.ini', 'w', encoding='utf-8') as configfile:
             config.write(configfile)
     return config
 
 
+def df_merge_external_data(df: pd.DataFrame, pkids_list: list):
+    for item in pkids_list:
+        df.loc[df[sn_key] == item['sn'], 'pkid'] = item['pkid']
+    print(df)
+
+
 get_token()
+pkid_reader = PKIDReader()
+pkid_list = pkid_reader.read_pkid()
+#  TODO 合并出现空的pkid 导致日期无法计算, 日期用SN的日期
 df = read_data_from_excel()
+df_merge_external_data(df, pkid_list)
+sys.exit()
 send_data_to_lecoo(df)
 show_popup("数据传输完成！")

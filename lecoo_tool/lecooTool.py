@@ -380,7 +380,7 @@ def get_daily_counter():
     """
     global counter
     current_date = datetime.date.today().strftime("%Y%m%d")
-    filename = "resource/tmp/counter.txt"
+    filename = "../resource/tmp/counter.txt"
     if not os.path.exists(filename):
         counter = 1
     else:
