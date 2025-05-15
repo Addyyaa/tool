@@ -10,6 +10,7 @@ import re
 class PKIDReader:
     def __init__(self):
         self.current_dir = os.getcwd()
+        self.pkids_dir = os.path.join(self.current_dir, 'pkids')
 
     def read_pkid(self):
         file_contents = []
@@ -59,10 +60,11 @@ class PKIDReader:
             sys.exit()
 
     def prompt_for_pikid_file(self):
-        os.startfile(os.path.join(self.current_dir, 'pkids'))
         self.show_popup("未检测到PKID文件，请在pkids文件夹下添加PKID文件后重新运行程序！", self.exit_program)
 
-    def exit_program(self):
+    def exit_program(self, open_pkid_dir: bool = True):
+        if open_pkid_dir:
+            os.startfile(os.path.join(self.current_dir, 'pkids'))
         sys.exit()
 
     def show_popup(self, message: str, closed: Callable[[], None] = None):

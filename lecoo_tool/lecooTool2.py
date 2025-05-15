@@ -64,19 +64,19 @@ progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
 # 测试环境 TODO 切换成正式环境
-token_api = 'https://api-cn-t.lenovo.com/uat/token'
-mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
-consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
+# token_api = 'https://api-cn-t.lenovo.com/uat/token'
+# mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+# material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+# consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
+# consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
 
 
-# # 生产环境
-# token_api = 'https://api-cn.lenovo.com/token'
-# mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-# material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
-# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+# 生产环境
+token_api = 'https://api-cn.lenovo.com/token'
+mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
 
 
 # 自定义一个异常类用于token失效是抛出
@@ -522,10 +522,7 @@ def extract_component_production_date(barcode: str) -> str:
         else:
             date_info = barcode[-4:-7:-1][::-1]  # TODO 此处键鼠的SN与其他规则不一致，无法断定生产日期，需要与工厂确认
         try:
-            print(barcode)
-            print(date_info)
             current_year = datetime.datetime.now().year
-            print(current_year)
             current_year = int(str(current_year)[:3]) * 10
             year = date_info[0]
             year = int(year) + current_year
@@ -788,8 +785,13 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                     # 设置MATERIAL_NO
                     body_item['MATERIAL_NO'] = component
                 else:
-                    meterial_date = extract_component_production_date(component)
-                    body_item['MATERIAL_NO'] = component[3:12]
+                    # pkid字段需要单独处理，该字段不符合日期规则，需要使用SN的日期
+                    if component in df1['pkid'].tolist():
+                        meterial_date = create_date
+                        body_item['MATERIAL_NO'] = component  # TODO pkid是根据微软的产品id和设备生成的，不符合SN的编码规则，故无法按照规则提取9码，使用原值
+                    else:
+                        meterial_date = extract_component_production_date(component)
+                        body_item['MATERIAL_NO'] = component[3:12]
                 body_item['MATERIAL_BARCODE'] = component  # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
                 body_item['PRODUCT_DATE'] = meterial_date if meterial_date else loss_tip
                 # body['Data'].append(body_item) # 字典修改是在原引用对象的基础上修改的，所以后续的修改还是会修改这个对象，最终导致列表里面的元素都是一样的
@@ -815,7 +817,7 @@ def request_handler(api, body):
             # 这会将所有NumPy和pandas特殊类型转换为Python标准类型
             json_body = json.loads(json.dumps(body, default=str))
             response = requests.post(api, json=json_body, headers=header)
-            print(f"======>{json.dumps(body)}")  # TODO 删掉
+            # print(f"======>{json.dumps(body)}")  # TODO 需要注释， 用于打印上传的数据调试用
         except Exception as e:
             show_popup(f"请求接口时出错：{e}")
             logging.error(f"请求接口时出错：{e}")
@@ -913,18 +915,45 @@ def get_local_config():
     return config
 
 
-def df_merge_external_data(df: pd.DataFrame, pkids_list: list):
+def df_merge_external_data(pkrd: PKIDReader, df: pd.DataFrame, pkids_list: list):
+    check_data_consistency(pkrd, df, pkids_list)
     for item in pkids_list:
         df.loc[df[sn_key] == item['sn'], 'pkid'] = item['pkid']
-    print(df)
+
+
+def check_data_consistency(pkrd: PKIDReader, df: pd.DataFrame, pkids_list: list):
+    show_popup1 = pkrd.show_popup
+    exit_program = pkrd.exit_program
+
+    def exit_program_without_open_dir():
+        return pkrd.exit_program(open_pkid_dir=False)
+
+    item_count = df.shape[0]
+    pkids_len = len(pkids_list)
+    item_list = df['装箱条码'].tolist()
+    pkids_sn = [item['sn'] for item in pkids_list]
+    loss_data = []
+
+    if item_count == pkids_len:
+        return
+    else:
+        if item_count > pkids_len:
+            for item in item_list:
+                if item not in pkids_sn:
+                    loss_data.append(item)
+            show_popup1(f"缺少以下SN码对应的pkid，SN：{loss_data}，请补充pkid文件至【pkids】目录", exit_program)
+        else:
+            for item in pkids_sn:
+                if item not in item_list:
+                    loss_data.append(item)
+            show_popup1(f"读取表格文件，发现缺少以下SN码对应的，SN：{loss_data}，请检查表格数据是否完整",
+                        exit_program_without_open_dir)
 
 
 get_token()
 pkid_reader = PKIDReader()
 pkid_list = pkid_reader.read_pkid()
-#  TODO 合并出现空的pkid 导致日期无法计算, 日期用SN的日期
 df = read_data_from_excel()
-df_merge_external_data(df, pkid_list)
-sys.exit()
+df_merge_external_data(pkid_reader, df, pkid_list)
 send_data_to_lecoo(df)
 show_popup("数据传输完成！")
