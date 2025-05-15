@@ -64,19 +64,19 @@ progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
 # 测试环境 TODO 切换成正式环境
-# token_api = 'https://api-cn-t.lenovo.com/uat/token'
-# mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-# material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-# consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
-# consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
+token_api = 'https://api-cn-t.lenovo.com/uat/token'
+mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
+consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
 
 
-# 生产环境
-token_api = 'https://api-cn.lenovo.com/token'
-mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
-consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+# # 生产环境
+# token_api = 'https://api-cn.lenovo.com/token'
+# mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+# material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
 
 
 # 自定义一个异常类用于token失效是抛出
@@ -106,7 +106,6 @@ def create_progress_window():
     try:
         progress_window = tk.Tk()
         progress_window.title("处理进度")
-        # 初始大小，后面会更新
         initial_width = 300
         initial_height = 100
         progress_window.geometry(f"{initial_width}x{initial_height}")
@@ -115,9 +114,15 @@ def create_progress_window():
         # 添加窗口关闭处理器
         def on_window_close():
             global progress_window, progress_label, progress_bar_widget
-            progress_window = None
-            progress_label = None
-            progress_bar_widget = None
+            try:
+                if progress_window and progress_window.winfo_exists():
+                    progress_window.destroy()
+            except tk.TclError:
+                pass
+            finally:
+                progress_window = None
+                progress_label = None
+                progress_bar_widget = None
 
         progress_window.protocol("WM_DELETE_WINDOW", on_window_close)
 
@@ -196,7 +201,7 @@ def update_progress_window():
             progress_label.config(text="处理完成！")
             # 使用安全的方式延迟关闭窗口
             try:
-                progress_window.after(2000, lambda: safe_destroy_window())
+                progress_window.after(2000, safe_destroy_window)
             except tk.TclError:
                 pass
     except Exception as e:
@@ -608,11 +613,15 @@ def send_data_to_lecoo(excel_data):
         tbl_Machine_Sequence(excel_data)
         tbl_Packing_Machine_Material(excel_data)
         # 如果所有处理都完成但窗口还存在，手动更新一次
-        file_path_tmp = f'../resource/tmp/'
-        new_name = file_path_tmp + (txt_name + '.xlsx')
-        print(file_path_tmp, new_name)
+        current_dir = os.getcwd()
+        resource_path = os.path.join(current_dir, 'resource')
+        if not os.path.exists(resource_path):
+            os.makedirs(resource_path)
+        new_name = resource_path + '/' + (txt_name + '.xlsx')
+        print(resource_path, new_name)
         if file_path is not None and new_name is not None:
-            shutil.copy(str(file_path), str(new_name))
+            # shutil.copy(str(file_path), str(new_name))
+            excel_data.to_excel(new_name, index=False)
         update_progress_window()
     except Exception as e:
         logging.error(f"处理数据时出错: {e}")
