@@ -62,20 +62,20 @@ total_request_count = 0
 progress_window: tk.Tk | None = None
 progress_label: Optional[tk.Label] = None
 progress_bar_widget: Optional[ttk.Progressbar] = None
-# 测试环境 TODO 切换成正式环境
-token_api = 'https://api-cn-t.lenovo.com/uat/token'
-mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
-consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
+# # 测试环境 TODO 切换成正式环境
+# token_api = 'https://api-cn-t.lenovo.com/uat/token'
+# mathine_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+# material_api = 'https://api-cn-t.lenovo.com/uat/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+# consumer_key = 'CrjifR54rsPeirvatCMBi8oRnUMa'
+# consumer_secret = 'T3C5Xwtt9Jn_pPv2PIBhs0q8mDwa'
 
 
-# # 生产环境
-# token_api = 'https://api-cn.lenovo.com/token'
-# mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
-# material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
-# consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
-# consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
+# 生产环境
+token_api = 'https://api-cn.lenovo.com/token'
+mathine_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_machine_sequence'
+material_api = 'https://api-cn.lenovo.com/v1.0/supply_chain/ips_guarantee_data/tbl_packing_machine_material'
+consumer_key = 'zuuA3GFYEfx1B2Hdngs3V_A19Vca'
+consumer_secret = 'KB3mrXiAMlJoTlqstyXSDniM5osa'
 
 
 # 自定义一个异常类用于token失效是抛出
