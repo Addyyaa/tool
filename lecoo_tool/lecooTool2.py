@@ -2,7 +2,6 @@ import json
 import logging
 import math
 import os
-import shutil
 import sys
 import time
 import requests
@@ -98,7 +97,7 @@ def create_progress_window():
     # 先检查是否已有窗口存在
     if progress_window is not None:
         try:
-            if hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
+            if progress_window.winfo_exists():
                 progress_window.destroy()
         except (tk.TclError, RuntimeError):
             pass  # 忽略错误，窗口可能已经被销毁
@@ -115,8 +114,9 @@ def create_progress_window():
         def on_window_close():
             global progress_window, progress_label, progress_bar_widget
             try:
-                if progress_window and progress_window.winfo_exists():
-                    progress_window.destroy()
+                if progress_window:
+                    if progress_window.winfo_exists():
+                        progress_window.destroy()
             except tk.TclError:
                 pass
             finally:
@@ -217,7 +217,7 @@ def safe_destroy_window():
     global progress_window
     if isinstance(progress_window, tk.Tk):
         try:
-            if progress_window and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
+            if progress_window and progress_window.winfo_exists():
                 progress_window.destroy()
         except Exception as e:
             logging.warning(f"关闭进度窗口时出错: {e}")
@@ -607,8 +607,9 @@ def send_data_to_lecoo(excel_data):
 
     try:
         # 创建进度窗口前确保之前的窗口已关闭
-        if progress_window is not None and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
-            progress_window.destroy()
+        if progress_window is not None:
+            if progress_window.winfo_exists():
+                progress_window.destroy()
         create_progress_window()  # 创建进度窗口
         tbl_Machine_Sequence(excel_data)
         tbl_Packing_Machine_Material(excel_data)
@@ -626,8 +627,9 @@ def send_data_to_lecoo(excel_data):
     except Exception as e:
         logging.error(f"处理数据时出错: {e}")
         # 确保即使发生错误，窗口也会关闭
-        if progress_window is not None and hasattr(progress_window, 'winfo_exists') and progress_window.winfo_exists():
-            progress_window.destroy()
+        if progress_window is not None:
+            if progress_window.winfo_exists():
+                progress_window.destroy()
 
 
 def tbl_Machine_Sequence(df1: pd.DataFrame):
