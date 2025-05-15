@@ -967,6 +967,19 @@ def check_data_consistency(pkrd: PKIDReader, df: pd.DataFrame, pkids_list: list)
                         exit_program_without_open_dir)
 
 
+def del_pkid_files(path):
+    if os.path.exists(path):
+        files = os.listdir(path)
+        root = os.path.abspath(path)
+        for file in files:
+            if file.endswith('.ini'):
+                file_path = os.path.join(root, file)
+                try:
+                    os.unlink(file_path)
+                except Exception as e:
+                    logging.error(f"删除文件失败，文件路径：{file_path},错误信息：{e}")
+
+
 get_token()
 pkid_reader = PKIDReader()
 pkid_list = pkid_reader.read_pkid()
@@ -974,3 +987,5 @@ df = read_data_from_excel()
 df_merge_external_data(pkid_reader, df, pkid_list)
 send_data_to_lecoo(df)
 show_popup("数据传输完成！")
+# 删除pkid文件，防止下次重复读取
+del_pkid_files(pkid_reader.pkids_dir)
