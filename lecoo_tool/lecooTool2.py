@@ -902,9 +902,15 @@ def get_local_config():
         config.read("config.ini", encoding='utf-8')
         if not config.sections() or not config.has_section('CONFIG') or not config.options('CONFIG'):
             config['CONFIG'] = {
-                '生产工厂代码': '',
-                '每批处理数量': '',
-                'ODM': 'OST'
+                '生产工厂代码': 'AT',
+                '每批处理数量': '100',
+                'ODM': 'LC',
+                'token_api': '',
+                'mathine_api': '',
+                'material_api': '',
+                'consumer_key': '',
+                'consumer_secret': '',
+                'pn_key': '8码'
             }
             with open('../config.ini', 'w') as configfile:
                 config.write(configfile)
