@@ -55,6 +55,7 @@ planet_code = ""
 # 新增的电脑pkid相关字段
 o3_flag = '870041003'
 win_version = '870041001'
+pkid_pn = '870041002'
 
 # 如果缺少信息的字段使用下面的内容
 loss_tip = ""
@@ -370,11 +371,13 @@ def show_progress_window(total, current):
 def get_token():
     config = get_local_config()
     option = 'CONFIG'
-    global token_api, consumer_key, consumer_secret, o3_flag, win_version
+    global token_api, consumer_key, consumer_secret, o3_flag, win_version, pkid_pn
     o3_flag_from_config = config.get(option, 'o3_flag')
     o3_flag = o3_flag_from_config if o3_flag_from_config is not None and o3_flag_from_config != "" else o3_flag
     win_version_from_config = config.get(option, 'win_version')
     win_version = win_version_from_config if win_version_from_config is not None and win_version_from_config != "" else win_version
+    pkid_pn_from_config = config.get(option, 'pkid_pn')
+    pkid_pn = pkid_pn_from_config if pkid_pn_from_config is not None and pkid_pn_from_config != "" else pkid_pn
     tkn = config.get(option, 'token_api')
     token_api = tkn if tkn is not None and tkn != "" else token_api
     print(token_api)
@@ -814,7 +817,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                     # pkid字段需要单独处理，该字段不符合日期规则，需要使用SN的日期
                     if component in df1['Lecoo DPK Windows11 Home HE DPK'].tolist() or component in df1['Lecoo OA3FLAG'].tolist() or component in df1['Lecoo Windows11 Home Chinese Language'].tolist():
                         meterial_date = create_date
-                        body_item['MATERIAL_NO'] = component  # TODO pkid是根据微软的产品id和设备生成的，不符合SN的编码规则，故无法按照规则提取9码，使用原值
+                        body_item['MATERIAL_NO'] = pkid_pn  # TODO pkid是根据微软的产品id和设备生成的，不符合SN的编码规则，使用给定值
                     else:
                         meterial_date = extract_component_production_date(component)
                         body_item['MATERIAL_NO'] = component[3:12]
@@ -927,7 +930,8 @@ def get_local_config():
                 'consumer_secret': '',
                 'pn_key': '8码',
                 'o3_flag': '',
-                'win_version': ''
+                'win_version': '',
+                'pkid_pn': ''
             }
             with open('./config.ini', 'w') as configfile:
                 config.write(configfile)
