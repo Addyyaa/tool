@@ -87,9 +87,16 @@ class PKIDReader:
         # 设置弹窗总是位于最上层
         popup.attributes('-topmost', True)
 
-        # 创建标签显示消息
-        label = tk.Label(popup, text=message)
-        label.pack(padx=20, pady=20)
+        # 创建带滚动条的Text控件
+        frame = tk.Frame(popup)
+        frame.pack(padx=20, pady=20)
+        scrollbar = tk.Scrollbar(frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text = tk.Text(frame, wrap=tk.WORD, yscrollcommand=scrollbar.set, width=80, height=10)
+        text.insert(tk.END, message)
+        text.config(state=tk.DISABLED)
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=text.yview)
 
         # 获取屏幕宽度和高度
         screen_width = popup.winfo_screenwidth()
