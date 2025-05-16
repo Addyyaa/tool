@@ -815,7 +815,10 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                     body_item['MATERIAL_NO'] = component
                 else:
                     # pkid字段需要单独处理，该字段不符合日期规则，需要使用SN的日期
-                    if component in df1['Lecoo DPK Windows11 Home HE DPK'].tolist() or component in df1['Lecoo OA3FLAG'].tolist() or component in df1['Lecoo Windows11 Home Chinese Language'].tolist():
+                    if component in df1['Lecoo OA3FLAG'].tolist() or component in df1['Lecoo Windows11 Home Chinese Language'].tolist():
+                        meterial_date = create_date
+                        body_item['MATERIAL_NO'] = component  # TODO pkid是根据微软的产品id和设备生成的，不符合SN的编码规则，使用给定值
+                    elif component in df1['Lecoo DPK Windows11 Home HE DPK'].tolist():
                         meterial_date = create_date
                         body_item['MATERIAL_NO'] = pkid_pn  # TODO pkid是根据微软的产品id和设备生成的，不符合SN的编码规则，使用给定值
                     else:
