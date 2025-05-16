@@ -372,10 +372,8 @@ def get_token():
     option = 'CONFIG'
     global token_api, consumer_key, consumer_secret, o3_flag, win_version
     o3_flag_from_config = config.get(option, 'o3_flag')
-    print(o3_flag)
     o3_flag = o3_flag_from_config if o3_flag_from_config is not None and o3_flag_from_config != "" else o3_flag
     win_version_from_config = config.get(option, 'win_version')
-    print(win_version)
     win_version = win_version_from_config if win_version_from_config is not None and win_version_from_config != "" else win_version
     tkn = config.get(option, 'token_api')
     token_api = tkn if tkn is not None and tkn != "" else token_api
@@ -1010,9 +1008,6 @@ pkid_reader = PKIDReader()
 pkid_list = pkid_reader.read_pkid()
 df = read_data_from_excel()
 df_merge_external_data(pkid_reader, df, pkid_list)
-print(df)
-df.to_excel('test.xlsx', index=False)
-sys.exit()
 send_data_to_lecoo(df)
 show_popup("数据传输完成！")
 # 删除pkid文件，防止下次重复读取
