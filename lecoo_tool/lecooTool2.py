@@ -371,10 +371,12 @@ def get_token():
     config = get_local_config()
     option = 'CONFIG'
     global token_api, consumer_key, consumer_secret, o3_flag, win_version
-    o3_flag = config.get(option, 'o3_flag')
-    o3_flag = o3_flag if o3_flag is not None and o3_flag != "" else o3_flag
-    win_version = config.get(option, 'win_version')
-    win_version = win_version if win_version is not None and win_version != "" else win_version
+    o3_flag_from_config = config.get(option, 'o3_flag')
+    print(o3_flag)
+    o3_flag = o3_flag_from_config if o3_flag_from_config is not None and o3_flag_from_config != "" else o3_flag
+    win_version_from_config = config.get(option, 'win_version')
+    print(win_version)
+    win_version = win_version_from_config if win_version_from_config is not None and win_version_from_config != "" else win_version
     tkn = config.get(option, 'token_api')
     token_api = tkn if tkn is not None and tkn != "" else token_api
     print(token_api)
@@ -812,7 +814,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
                     body_item['MATERIAL_NO'] = component
                 else:
                     # pkid字段需要单独处理，该字段不符合日期规则，需要使用SN的日期
-                    if component in df1['pkid'].tolist():
+                    if component in df1['Lecoo DPK Windows11 Home HE DPK'].tolist() or component in df1['Lecoo OA3FLAG'].tolist() or component in df1['Lecoo Windows11 Home Chinese Language'].tolist():
                         meterial_date = create_date
                         body_item['MATERIAL_NO'] = component  # TODO pkid是根据微软的产品id和设备生成的，不符合SN的编码规则，故无法按照规则提取9码，使用原值
                     else:
@@ -843,7 +845,7 @@ def request_handler(api, body):
             # 这会将所有NumPy和pandas特殊类型转换为Python标准类型
             json_body = json.loads(json.dumps(body, default=str))
             response = requests.post(api, json=json_body, headers=header)
-            # print(f"======>{json.dumps(body)}")  # TODO 需要注释， 用于打印上传的数据调试用
+            print(f"======>{json.dumps(body)}")  # TODO 需要注释， 用于打印上传的数据调试用
         except Exception as e:
             show_popup(f"请求接口时出错：{e}")
             logging.error(f"请求接口时出错：{e}")
@@ -1008,6 +1010,9 @@ pkid_reader = PKIDReader()
 pkid_list = pkid_reader.read_pkid()
 df = read_data_from_excel()
 df_merge_external_data(pkid_reader, df, pkid_list)
+print(df)
+df.to_excel('test.xlsx', index=False)
+sys.exit()
 send_data_to_lecoo(df)
 show_popup("数据传输完成！")
 # 删除pkid文件，防止下次重复读取
