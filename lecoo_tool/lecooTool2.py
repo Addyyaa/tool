@@ -843,7 +843,7 @@ def request_handler(api, body):
             # 这会将所有NumPy和pandas特殊类型转换为Python标准类型
             json_body = json.loads(json.dumps(body, default=str))
             response = requests.post(api, json=json_body, headers=header)
-            print(f"======>{json.dumps(body)}")  # TODO 需要注释， 用于打印上传的数据调试用
+            # print(f"======>{json.dumps(body)}")  # TODO 需要注释， 用于打印上传的数据调试用
         except Exception as e:
             show_popup(f"请求接口时出错：{e}")
             logging.error(f"请求接口时出错：{e}")
