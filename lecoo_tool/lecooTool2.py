@@ -52,6 +52,10 @@ shop_key = "店铺"
 uwip_barcode_key = "主机条码"
 produce_date_key = "生产日期"
 planet_code = ""
+# 新增的电脑pkid相关字段
+o3_flag = '870041003'
+win_version = '870041001'
+
 # 如果缺少信息的字段使用下面的内容
 loss_tip = ""
 no_factory_name_key = "LecooTN"
@@ -366,7 +370,11 @@ def show_progress_window(total, current):
 def get_token():
     config = get_local_config()
     option = 'CONFIG'
-    global token_api, consumer_key, consumer_secret
+    global token_api, consumer_key, consumer_secret, o3_flag, win_version
+    o3_flag = config.get(option, 'o3_flag')
+    o3_flag = o3_flag if o3_flag is not None and o3_flag != "" else o3_flag
+    win_version = config.get(option, 'win_version')
+    win_version = win_version if win_version is not None and win_version != "" else win_version
     tkn = config.get(option, 'token_api')
     token_api = tkn if tkn is not None and tkn != "" else token_api
     print(token_api)
@@ -917,9 +925,11 @@ def get_local_config():
                 'material_api': '',
                 'consumer_key': '',
                 'consumer_secret': '',
-                'pn_key': '8码'
+                'pn_key': '8码',
+                'o3_flag': '',
+                'win_version': ''
             }
-            with open('../config.ini', 'w') as configfile:
+            with open('./config.ini', 'w') as configfile:
                 config.write(configfile)
     else:
         logging.info("未找到配置文件，开始创建配置文件")
@@ -932,7 +942,9 @@ def get_local_config():
             'material_api': '',
             'consumer_key': '',
             'consumer_secret': '',
-            'pn_key': '8码'
+            'pn_key': '8码',
+            'o3_flag': '',
+            'win_version': ''
         }
         with open('./config.ini', 'w', encoding='utf-8') as configfile:
             config.write(configfile)
@@ -942,7 +954,11 @@ def get_local_config():
 def df_merge_external_data(pkrd: PKIDReader, df: pd.DataFrame, pkids_list: list):
     check_data_consistency(pkrd, df, pkids_list)
     for item in pkids_list:
-        df.loc[df[sn_key] == item['sn'], 'pkid'] = item['pkid']
+        df.loc[df[sn_key] == item['sn'], 'Lecoo DPK Windows11 Home HE DPK'] = item['pkid']
+        # 设置o3flag
+        df.loc[df[sn_key] == item['sn'], 'Lecoo OA3FLAG'] = o3_flag
+        # 设置win_version
+        df.loc[df[sn_key] == item['sn'], 'Lecoo Windows11 Home Chinese Language'] = win_version
 
 
 def check_data_consistency(pkrd: PKIDReader, df: pd.DataFrame, pkids_list: list):
