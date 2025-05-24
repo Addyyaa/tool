@@ -371,13 +371,15 @@ def show_progress_window(total, current):
 def get_token():
     config = get_local_config()
     option = 'CONFIG'
-    global token_api, consumer_key, consumer_secret, o3_flag, win_version, pkid_pn
+    global token_api, consumer_key, consumer_secret, o3_flag, win_version, pkid_pn, sn_key
     o3_flag_from_config = config.get(option, 'o3_flag')
     o3_flag = o3_flag_from_config if o3_flag_from_config is not None and o3_flag_from_config != "" else o3_flag
     win_version_from_config = config.get(option, 'win_version')
     win_version = win_version_from_config if win_version_from_config is not None and win_version_from_config != "" else win_version
     pkid_pn_from_config = config.get(option, 'pkid_pn')
     pkid_pn = pkid_pn_from_config if pkid_pn_from_config is not None and pkid_pn_from_config != "" else pkid_pn
+    sn_key_from_config = config.get(option, 'sn_key')
+    sn_key = sn_key_from_config if sn_key_from_config is not None and sn_key_from_config != "" else sn_key
     tkn = config.get(option, 'token_api')
     token_api = tkn if tkn is not None and tkn != "" else token_api
     print(token_api)
@@ -934,7 +936,8 @@ def get_local_config():
                 'pn_key': '8码',
                 'o3_flag': '',
                 'win_version': '',
-                'pkid_pn': ''
+                'pkid_pn': '',
+                'sn_key': '装箱条码',
             }
             with open('./config.ini', 'w') as configfile:
                 config.write(configfile)
@@ -951,7 +954,9 @@ def get_local_config():
             'consumer_secret': '',
             'pn_key': '8码',
             'o3_flag': '',
-            'win_version': ''
+            'win_version': '',
+            'sn_key': '装箱条码',
+            'pkid_pn': ''
         }
         with open('./config.ini', 'w', encoding='utf-8') as configfile:
             config.write(configfile)
@@ -977,24 +982,18 @@ def check_data_consistency(pkrd: PKIDReader, df: pd.DataFrame, pkids_list: list)
 
     item_count = df.shape[0]
     pkids_len = len(pkids_list)
-    item_list = df['装箱条码'].tolist()
+    item_list = df[sn_key].tolist()
     pkids_sn = [item['sn'] for item in pkids_list]
     loss_data = []
 
-    if item_count == pkids_len:
-        return
-    else:
-        if item_count > pkids_len:
-            for item in item_list:
-                if item not in pkids_sn:
-                    loss_data.append(item)
-            show_popup1(f"缺少以下SN码对应的pkid，SN：{loss_data}，请补充pkid文件至【pkids】目录", exit_program)
-        else:
-            for item in pkids_sn:
-                if item not in item_list:
-                    loss_data.append(item)
-            show_popup1(f"读取表格文件，发现缺少以下SN码对应的，SN：{loss_data}，请检查表格数据是否完整",
-                        exit_program_without_open_dir)
+    for item in item_list:
+        if item not in pkids_sn:
+            loss_data.append(item)
+    for item in pkids_sn:
+        if item not in item_list:
+            loss_data.append(item)
+    loss_data = list(set(loss_data))
+    show_popup1(f"以下SN码数据缺失，请在表格和pkid中检查是否完整，SN：{loss_data}", exit_program)
 
 
 def del_pkid_files(path):
