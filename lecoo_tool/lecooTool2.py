@@ -17,8 +17,9 @@ from requests.exceptions import ConnectionError, Timeout, HTTPError
 from datetime import timedelta
 import re
 from lecoo_pkidreader import PKIDReader
+import functools
 
-# 配置日志记录器
+# 配置日志记录器pipreqs . --encoding=utf-8
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s [in %(filename)s:%(lineno)d]',
                     datefmt='%Y-%m-%d %H:%M:%S')
@@ -93,6 +94,30 @@ class TokenExpired(Exception):
 
     def __str__(self):
         return f'Error: {self.message}'
+
+def retry(max_attempts=3, delay=1, exceptions=(Exception,)):
+    """
+    一个通用的重试装饰器
+    :param max_attempts: 最大重试次数
+    :param delay: 每次重试之间的等待秒数
+    :param exceptions: 捕获哪些异常后重试，默认所有 Exception
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            attempt = 1
+            while attempt <= max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    print(f"第 {attempt} 次调用失败: {e}")
+                    if attempt == max_attempts:
+                        raise
+                    time.sleep(delay)
+                    attempt += 1
+            raise Exception(f"重试 {max_attempts} 次后仍失败")
+        return wrapper
+    return decorator
 
 
 # 创建进度窗口
@@ -451,7 +476,7 @@ def convert_cycle_to_production_date(weeks: str) -> str:
     # 使用正则表达式找到第一个前面是数字的 'A'
     match = re.search(r'\dA', weeks)
     if not match:
-        raise ValueError("未找到前面是数字的 'A'")
+        raise ValueError(f"条码不符合规则，条码: {weeks}")
 
     # 获取 'A' 的位置
     a_index = match.start() + 1  # +1 因为 match.start() 是 'A' 前数字的位置
@@ -646,11 +671,13 @@ def send_data_to_lecoo(excel_data):
         update_progress_window()
     except Exception as e:
         logging.error(f"处理数据时出错: {e}")
+        
         # 确保即使发生错误，窗口也会关闭
         if progress_window is not None:
             if progress_window.winfo_exists():
                 progress_window.destroy()
-
+        return False
+    return True
 
 def tbl_Machine_Sequence(df1: pd.DataFrame):
     global df_row
@@ -724,7 +751,7 @@ def tbl_Machine_Sequence(df1: pd.DataFrame):
     if data_list_for_count:
         body["Data"] = data_list_for_count
         request_handler(api, body)
-
+    return True
 
 def tbl_Packing_Machine_Material(df1: pd.DataFrame):
     params_rows = df1.iterrows()
@@ -833,7 +860,7 @@ def tbl_Packing_Machine_Material(df1: pd.DataFrame):
             request_handler(api, body)
             body["Data"] = []
 
-
+@retry(max_attempts=3, delay=1, exceptions=(Exception,))
 def request_handler(api, body):
     def is_json(response1):
         try:
@@ -853,9 +880,7 @@ def request_handler(api, body):
             response = requests.post(api, json=json_body, headers=header)
             # print(f"======>{json.dumps(body)}")  # TODO 需要注释， 用于打印上传的数据调试用
         except Exception as e:
-            show_popup(f"请求接口时出错：{e}")
-            logging.error(f"请求接口时出错：{e}")
-            sys.exit()
+            raise
 
         # 获取正确的状态码并安全地调用处理函数
         try:
@@ -881,20 +906,23 @@ def request_handler(api, body):
                     progress_bar += 1
             except Exception as e:
                 logging.warning(f"处理响应时出错: {e}\t状态码：{response.status_code}\ttxt：{response.text}")
+                raise
         except Exception as e:
             logging.warning(f"处理响应时出错: {e}\t状态码：{response.status_code}\ttxt：{response.text}")
+            raise
         print(response.text, f'\t{response.status_code}')
     except ConnectionError:
-        show_popup("无法连接服务器，请检查网络连接")
         header = get_header()
         response = requests.post(api, json=body, headers=header)
-        logging.info(f"重新获取请求token后的请求结果：{response.text}")
+        raise
     except Timeout:
-        show_popup("请求超时，请重试")
+        raise
     except HTTPError as e:
-        show_popup(f"HTTP错误发生: {e}")
+        raise
     except Exception as e:
-        logging.error(f"接口请求失败，错误信息：{e}")
+        show_popup(f"接口请求失败，错误信息：{e}")
+        raise Exception(f"接口请求失败，错误信息：{e}")
+        
 
 
 def get_daily_counter():
@@ -922,7 +950,7 @@ def get_daily_counter():
 def get_local_config():
     config = configparser.ConfigParser()
     if os.path.exists("./config.ini"):
-        config.read("config.ini", encoding='utf-8')
+        config.read("./config.ini", encoding='utf-8')
         if not config.sections() or not config.has_section('CONFIG') or not config.options('CONFIG'):
             config['CONFIG'] = {
                 '生产工厂代码': 'AT',
@@ -993,7 +1021,8 @@ def check_data_consistency(pkrd: PKIDReader, df: pd.DataFrame, pkids_list: list)
         if item not in item_list:
             loss_data.append(item)
     loss_data = list(set(loss_data))
-    show_popup1(f"以下SN码数据缺失，请在表格和pkid中检查是否完整，SN：{loss_data}", exit_program)
+    if len(loss_data) > 0:
+        show_popup1(f"以下SN码数据缺失，请在表格和pkid中检查是否完整，SN：{loss_data}", exit_program)
 
 
 def del_pkid_files(path):
@@ -1014,7 +1043,10 @@ pkid_reader = PKIDReader()
 pkid_list = pkid_reader.read_pkid()
 df = read_data_from_excel()
 df_merge_external_data(pkid_reader, df, pkid_list)
-send_data_to_lecoo(df)
-show_popup("数据传输完成！")
-# 删除pkid文件，防止下次重复读取
-del_pkid_files(pkid_reader.pkids_dir)
+result2 = send_data_to_lecoo(df)
+if result2:
+    show_popup("数据传输完成！")
+    # 删除pkid文件，防止下次重复读取
+    del_pkid_files(pkid_reader.pkids_dir)
+else:
+    show_popup("数据传输失败！")

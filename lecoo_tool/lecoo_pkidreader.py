@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Callable
 import glob
@@ -56,6 +57,7 @@ class PKIDReader:
         if ini_files:
             return ini_files
         else:
+            logging.info(f"pkid目录：{self.pkids_dir} 下未检测到PKID文件")
             self.prompt_for_pikid_file()
             sys.exit()
 
