@@ -1,17 +1,28 @@
+# -*- mode: python ; coding: utf-8 -*-
 import os
+
+block_cipher = None
+
 a = Analysis(
     ['lecooTool2.py'],
     pathex=[os.path.abspath('.')],
     binaries=[],
-    datas=[],
-    hiddenimports=['lecoo_pkidreader'],
+    datas=[
+        ('config.ini', '.'),  # Include config file
+        ('pkids/*.ini', 'pkids')  # Include pkids directory .ini files
+    ],
+    hiddenimports=['lecoo_pkidreader', 'pandas', 'xlrd', 'requests', 'numpy.linalg'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'torch', 'sympy', 'networkx', 'filelock', 'fsspec', 'Jinja2', 'MarkupSafe',
+        'mpmath', 'tensorflow', 'PyQt5', 'django', 'flask', 'pytorch', 'seaborn',
+        'matplotlib', 'scipy', 'numpy.fft'
+    ],
     noarchive=False,
 )
-pyz = PYZ(a.pure)
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
@@ -30,5 +41,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    onefile=True
 )
